@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="utf-8" />
+    <title>简易 ChatGPT 聊天</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Tailwind CSS CDN，用来快速写漂亮样式 -->
+    <script src="./tailwind.js"></script>
+    <!-- Vue 3 CDN，用来管理聊天状态和交互 -->
+    <script src="./vue3.js"></script>
+</head>
+
+<body class="min-h-screen bg-zinc-100 text-zinc-900 antialiased">
+    <div id="app" class="h-screen flex justify-center overflow-hidden">
+        <div class="flex w-full max-w-5xl bg-white border-x border-zinc-200 h-full">
+            <!-- 左侧聊天列表 / 联系人 -->
+            <aside class="w-56 border-r border-zinc-200 bg-zinc-50/80 flex flex-col">
+                <div class="px-3 py-3 border-b border-zinc-200">
+                    <div class="text-xs font-semibold text-zinc-500 mb-1">会话列表</div>
+                    <button @click="createNewChat" :disabled="hasEmptyChat"
+                        class="w-full inline-flex items-center justify-center rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-white shadow-sm transition"
+                        :class="hasEmptyChat ? 'bg-zinc-400 cursor-not-allowed' : 'bg-blue-500 hover:bg-blue-600'"
+                        :title="hasEmptyChat ? '当前存在空会话，无法创建新会话' : '创建新会话'">
+                        新建对话
+                    </button>
+                </div>
+                <div class="flex-1 overflow-y-auto py-2">
+                    <div v-for="chat in chats" :key="chat.id" @click="setActiveChat(chat.id)"
+                        class="w-full px-3 py-2 text-left text-xs flex flex-col gap-0.5 border-l-2 cursor-pointer group"
+                        :class="chat.id === activeChatId
+                                ? 'bg-white border-blue-500 text-zinc-900'
+                                : 'bg-transparent border-transparent text-zinc-600 hover:bg-zinc-100'">
+                        <div class="flex items-center justify-between gap-1">
+                            <!-- 会话状态标识：空会话为空心圆，有消息为实心圆 -->
+                            <span class="flex-shrink-0 w-2 h-2 rounded-full"
+                                :class="isChatEmpty(chat) ? 'border border-zinc-400' : 'bg-green-500'"
+                                :title="isChatEmpty(chat) ? '空会话' : '有消息'"></span>
+                            <span class="font-medium truncate flex-1">{{ chat.name }}</span>
+                            <button @click.stop="deleteChat(chat.id)"
+                                class="opacity-0 group-hover:opacity-100 text-zinc-400 hover:text-red-500 transition p-0.5 rounded"
+                                title="删除会话">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16">
+                                    </path>
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="text-[10px] text-zinc-400 truncate">
+                            {{ chat.preview || '暂无消息，点击开始聊天' }}
+                        </div>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- 右侧主聊天区域 -->
+            <div class="flex flex-col flex-1 h-full">
+                <!-- 顶部栏 -->
+                <header
+                    class="flex items-center justify-between px-4 py-3 border-b border-zinc-200 bg-zinc-50/80 backdrop-blur">
+                    <div>
+                        <h1 class="text-base font-semibold text-zinc-900">
+                            {{ activeChat?.name || '我的 AI 助手' }}
+                        </h1>
+                        <p class="mt-0.5 text-[11px] text-zinc-400">
+                            当前用户: {{ currentUserId || '未设置' }} · thread_id: {{ activeChat?.threadId || '-' }}
+                        </p>
+                    </div>
+                    <button @click="openUserModal"
+                        class="inline-flex items-center rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 shadow-sm hover:bg-zinc-100 transition">
+                        切换用户
+                    </button>
+                </header>
+
+                <!-- 聊天内容 -->
+                <main ref="chatMain" class="flex-1 overflow-y-auto px-4 py-4 space-y-4 bg-zinc-50">
+                    <template v-if="messages.length">
+                        <div v-for="(m, index) in messages" :key="`msg-${index}-${m.content?.slice(0, 10)}`"
+                            class="flex gap-3" :class="m.role === 'user' ? 'justify-end' : 'justify-start'">
+
+                            <!-- AI 消息：头像在左 -->
+                            <template v-if="m.role === 'assistant'">
+                                <div class="flex gap-3 max-w-full">
+                                    <div
+                                        class="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-200 text-[13px] text-zinc-800 flex-shrink-0">
+                                        AI
+                                    </div>
+                                    <div class="flex-1 min-w-0">
+                                        <div class="text-[11px] text-zinc-500 mb-0.5">AI 助手</div>
+                                        <div
+                                            class="rounded-2xl bg-white border border-zinc-200 px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap break-words">
+                                            <!-- 显示消息内容 -->
+                                            <template v-if="m.displayedContent || m.content">
+                                                {{ m.displayedContent || m.content }}
+                                                <!-- 回复还在进行中时，显示一个跳动的小光标 -->
+                                                <span v-if="m.isThinking"
+                                                    class="inline-block w-2 h-3 ml-0.5 align-baseline animate-pulse bg-zinc-300 rounded-sm">&nbsp;</span>
+                                            </template>
+
+                                            <!-- 还没有内容，但处于思考中：显示三点加载动画 -->
+                                            <template v-else-if="m.isThinking">
+                                                <div class="flex items-center gap-1 text-xs text-zinc-400">
+                                                    <span
+                                                        class="h-1.5 w-1.5 rounded-full bg-zinc-400 animate-bounce"></span>
+                                                    <span
+                                                        class="h-1.5 w-1.5 rounded-full bg-zinc-400 animate-bounce [animation-delay:0.15s]"></span>
+                                                    <span
+                                                        class="h-1.5 w-1.5 rounded-full bg-zinc-400 animate-bounce [animation-delay:0.3s]"></span>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <!-- 用户消息：头像在右 -->
+                            <template v-else>
+                                <div class="flex gap-3 max-w-full flex-row-reverse">
+                                    <div
+                                        class="flex h-8 w-8 items-center justify-center rounded-full bg-blue-500 text-[13px] text-white flex-shrink-0">
+                                        我
+                                    </div>
+                                    <div class="flex-1 min-w-0 text-right">
+                                        <div class="text-[11px] text-zinc-500 mb-0.5">你</div>
+                                        <div
+                                            class="ml-auto inline-block rounded-2xl bg-blue-500 px-3 py-2 text-sm leading-relaxed text-white whitespace-pre-wrap break-words">
+                                            {{ m.content }}
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <!-- 当前会话无消息时的占位提示 -->
+                    <template v-else>
+                        <div class="h-full flex flex-col items-center justify-center text-center text-xs text-zinc-400">
+                            <p class="mb-1">这个会话还没有任何消息。</p>
+                            <p>在下方输入你的问题，然后发送来开始聊天。</p>
+                        </div>
+                    </template>
+                </main>
+
+                <!-- 输入区域 -->
+                <section class="border-t border-zinc-200 bg-zinc-50/80 backdrop-blur px-4 pt-2 pb-3">
+                    <div class="flex items-end gap-3">
+                        <div
+                            class="flex-1 rounded-2xl border border-zinc-200 bg-white px-3 py-2 shadow-sm focus-within:ring-1 focus-within:ring-blue-500 focus-within:border-blue-500 transition">
+                            <textarea v-model="input" @keydown.enter.exact.prevent="handleEnter"
+                                @keydown.enter.shift.exact.stop rows="1"
+                                placeholder="在这里输入你的问题……（按 Enter 发送，Shift+Enter 换行）"
+                                class="block w-full resize-none border-0 bg-transparent p-0 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-0"></textarea>
+                        </div>
+                        <button :disabled="!input.trim() || isThinking" @click="send"
+                            class="inline-flex items-center justify-center rounded-full bg-blue-500 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-blue-600 disabled:bg-zinc-300 disabled:cursor-not-allowed">
+                            <span v-if="!isThinking">发送</span>
+                            <span v-else class="inline-flex items-center gap-1 text-xs">
+                                <span
+                                    class="h-3 w-3 animate-spin rounded-full border-[2px] border-white/40 border-t-white"></span>
+                                思考中...
+                            </span>
+                        </button>
+                    </div>
+                    <div class="mt-1 flex items-center justify-between text-[11px] text-zinc-400">
+                        <span>多会话版本 · 左侧为不同的聊天会话</span>
+                        <span>Enter 发送 · Shift+Enter 换行</span>
+                    </div>
+                </section>
+            </div>
+        </div>
+
+        <!-- 用户名输入弹窗（必须放在 #app 内部，v-if 才生效） -->
+        <div v-if="isUserModalOpen"
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+            <div class="w-[320px] rounded-2xl bg-white shadow-xl border border-zinc-200 p-4">
+                <div class="text-sm font-semibold text-zinc-900 mb-1">设置你的名字</div>
+                <div class="text-xs text-zinc-500 mb-3">填写后将作为 userId，用于与后端交互。</div>
+                <input v-model="tempUserInput" type="text" placeholder="请输入你的名字"
+                    class="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500" />
+                <div class="mt-4 flex justify-end gap-2">
+                    <button @click="closeUserModal"
+                        class="px-3 py-1.5 text-xs rounded-md border border-zinc-200 text-zinc-600 hover:bg-zinc-100 transition">取消
+                    </button>
+                    <button @click="confirmUserId"
+                        class="px-3 py-1.5 text-xs rounded-md bg-blue-500 text-white hover:bg-blue-600 transition">确定
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, computed, reactive, nextTick, onMounted } = Vue;
+
+        // ========== 配置常量 ==========
+        const CONFIG = {
+            API_URL: "http://127.0.0.1:8000/api/chat/stream",
+            THREADS_API_URL: "http://127.0.0.1:8000/api/threads",
+            TYPEWRITER_SPEED: 20, // 打字机效果速度（毫秒/字符）
+            SCROLL_DEBOUNCE: 100, // 滚动防抖时间（毫秒）
+            TYPEWRITER_CLEANUP_DELAY: 100 // 打字机清理延迟（毫秒）
+        };
+
+        // 默认欢迎消息（所有会话的第一条 AI 消息）
+        // const DEFAULT_WELCOME_MESSAGE = {
+        //     role: "assistant",
+        //     content: "你好，我是你的 AI 助手，可以像 ChatGPT 一样和你聊天。\n你可以在下方输入问题，然后按「回车」或点击「发送」。",
+        //     displayedContent: "你好，我是你的 AI 助手，可以像 ChatGPT 一样和你聊天。\n你可以在下方输入问题，然后按「回车」或点击「发送」。"
+        // };
+
+        createApp({
+            setup() {
+                // ========== 响应式状态 ==========
+                const chats = ref([]);  // 会话列表将从后端加载
+                const activeChatId = ref("");
+                const input = ref("");
+                const chatMain = ref(null);
+                const typewriterTimers = new Map(); // 存储每个消息的打字机定时器
+                let scrollTimer = null; // 滚动防抖定时器
+                const currentUserId = ref("");
+                const isUserModalOpen = ref(false);
+                const tempUserInput = ref("");
+
+                // ========== 计算属性 ==========
+                const activeChat = computed(() =>
+                    chats.value.find(c => c.id === activeChatId.value) || null
+                );
+                const messages = computed(() =>
+                    activeChat.value ? activeChat.value.messages : []
+                );
+                const isThinking = computed(() => {
+                    if (!activeChat.value) return false;
+                    return activeChat.value.messages.some(m => m.role === "assistant" && m.isThinking);
+                });
+
+                // 检查是否存在空会话（没有消息的会话）
+                // 优先使用后端返回的 is_empty 状态，否则通过 messages.length 判断
+                const hasEmptyChat = computed(() => {
+                    return chats.value.some(chat => {
+                        // 如果有 isEmptyFromServer 字段，优先使用它
+                        if (chat.isEmptyFromServer !== undefined) {
+                            return chat.isEmptyFromServer;
+                        }
+                        return chat.messages.length === 0;
+                    });
+                });
+
+                // 判断单个会话是否为空
+                function isChatEmpty(chat) {
+                    if (chat.isEmptyFromServer !== undefined) {
+                        return chat.isEmptyFromServer;
+                    }
+                    return chat.messages.length === 0;
+                }
+
+                // ========== 用户名 / 本地存储 ==========
+                function updateAllChatUserIds(uid) {
+                    chats.value.forEach(c => {
+                        c.userId = uid || "";
+                    });
+                }
+
+                function openUserModal() {
+                    tempUserInput.value = currentUserId.value;
+                    isUserModalOpen.value = true;
+                }
+
+                function closeUserModal() {
+                    // 如果尚未设置名字，则不允许关闭并提示
+                    if (!currentUserId.value.trim()) {
+                        alert("请先输入名字并点击确定，才能关闭弹窗哦！");
+                        return;
+                    }
+                    isUserModalOpen.value = false;
+                }
+
+                async function confirmUserId() {
+                    const val = tempUserInput.value.trim();
+                    if (!val) {
+                        alert("请输入你的名字，用作 userId");
+                        return;
+                    }
+                    currentUserId.value = val;
+                    localStorage.setItem("chatUserId", val);
+                    updateAllChatUserIds(val);
+                    isUserModalOpen.value = false;
+                    // 加载该用户的历史会话
+                    await loadThreads();
+                }
+
+                function ensureUserId() {
+                    if (currentUserId.value) return true;
+                    openUserModal();
+                    return false;
+                }
+
+                // ========== 工具函数 ==========
+                /**
+                 * 滚动到底部
+                 * @param {string} behavior - 滚动行为：'auto' | 'smooth'
+                 */
+                function scrollToBottom(behavior = "auto") {
+                    // 防抖处理：避免频繁滚动影响性能
+                    if (scrollTimer) {
+                        clearTimeout(scrollTimer);
+                    }
+
+                    scrollTimer = setTimeout(() => {
+                        nextTick(() => {
+                            if (!chatMain.value) return;
+                            const el = chatMain.value;
+                            el.scrollTo({
+                                top: el.scrollHeight,
+                                behavior
+                            });
+                        });
+                    }, behavior === "smooth" ? CONFIG.SCROLL_DEBOUNCE : 0);
+                }
+
+                /**
+                 * 启动打字机效果
+                 * @param {Object} msg - 消息对象
+                 * @param {number} speed - 打字速度（毫秒/字符）
+                 */
+                function startTypewriter(msg, speed = CONFIG.TYPEWRITER_SPEED) {
+                    // 初始化 displayedContent
+                    if (!msg.displayedContent) {
+                        msg.displayedContent = "";
+                    }
+
+                    // 如果已经有定时器在运行，不重复创建
+                    if (typewriterTimers.has(msg)) {
+                        return;
+                    }
+
+                    // 立即显示第一个字符（如果有内容）
+                    if (msg.content.length > 0 && msg.displayedContent.length === 0) {
+                        msg.displayedContent = msg.content.substring(0, 1);
+                        scrollToBottom("smooth");
+                    }
+
+                    // 创建定时器，逐个字符显示
+                    const timer = setInterval(() => {
+                        if (msg.displayedContent.length < msg.content.length) {
+                            // 每次显示一个字符
+                            msg.displayedContent = msg.content.substring(0, msg.displayedContent.length + 1);
+                            scrollToBottom("smooth");
+                        } else if (!msg.isThinking) {
+                            // 思考结束且内容已全部显示，清除定时器
+                            clearInterval(timer);
+                            typewriterTimers.delete(msg);
+                        }
+                        // 如果还在思考中，继续等待新内容
+                    }, speed);
+
+                    typewriterTimers.set(msg, timer);
+                }
+
+                /**
+                 * 停止打字机效果并确保所有内容显示
+                 * @param {Object} msg - 消息对象
+                 */
+                function stopTypewriter(msg) {
+                    if (typewriterTimers.has(msg)) {
+                        clearInterval(typewriterTimers.get(msg));
+                        typewriterTimers.delete(msg);
+                    }
+                    // 确保所有内容都已显示
+                    if (msg.displayedContent.length < msg.content.length) {
+                        msg.displayedContent = msg.content;
+                    }
+                }
+
+                // ========== 事件处理函数 ==========
+                function handleEnter() {
+                    if (!input.value.trim()) return;
+                    send();
+                }
+
+                /**
+                 * 切换当前会话
+                 * @param {string} chatId - 会话 ID
+                 */
+                async function setActiveChat(chatId) {
+                    if (activeChatId.value === chatId) return;
+                    activeChatId.value = chatId;
+
+                    // 如果该会话消息为空，尝试加载历史消息
+                    const chat = chats.value.find(c => c.id === chatId);
+                    if (chat && chat.messages.length === 0) {
+                        await loadThreadHistory(chat.threadId);
+                    }
+
+                    // 切换会话后自动滚到底部
+                    scrollToBottom("auto");
+                }
+
+                /**
+                 * 新建一个会话（调用后端 API）
+                 */
+                async function createNewChat() {
+                    if (!ensureUserId()) return;
+
+                    // 检查是否已存在空会话
+                    if (hasEmptyChat.value) {
+                        const emptyChat = chats.value.find(chat => chat.messages.length === 0);
+                        if (emptyChat) {
+                            // 自动切换到空会话
+                            activeChatId.value = emptyChat.id;
+                            alert('已存在一个空会话，无法创建新会话。');
+                            return;
+                        }
+                    }
+
+                    try {
+                        // 调用后端创建会话
+                        const response = await fetch(CONFIG.THREADS_API_URL, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                user_id: currentUserId.value,
+                                title: `新会话 ${chats.value.length + 1}`
+                            })
+                        });
+
+                        if (!response.ok) {
+                            throw new Error(`创建会话失败: ${response.statusText}`);
+                        }
+
+                        const data = await response.json();
+                        const thread = data.thread;
+
+                        // 添加到本地列表顶部
+                        chats.value.unshift({
+                            id: thread.id,
+                            name: thread.title || `会话 ${thread.id.slice(0, 8)}`,
+                            userId: thread.user_id,
+                            threadId: thread.id,
+                            preview: thread.preview || '暂无消息',
+                            messages: []
+                        });
+
+                        activeChatId.value = thread.id;
+                        input.value = "";
+                        scrollToBottom("auto");
+                    } catch (err) {
+                        console.error('创建会话失败:', err);
+                        alert('创建会话失败，请重试');
+                    }
+                }
+
+                /**
+                 * 处理流式响应数据
+                 * @param {ReadableStreamDefaultReader} reader - 流读取器
+                 * @param {Object} assistantMsg - AI 消息对象
+                 */
+                function handleStreamResponse(reader, assistantMsg) {
+                    const decoder = new TextDecoder("utf-8");
+                    let buffer = "";
+
+                    function read() {
+                        reader.read()
+                            .then(({ done, value }) => {
+                                if (done) {
+                                    // 流结束
+                                    assistantMsg.isThinking = false;
+                                    // 确保所有内容都已显示
+                                    if (assistantMsg.displayedContent.length < assistantMsg.content.length) {
+                                        startTypewriter(assistantMsg);
+                                    }
+                                    // 延迟清理，确保所有内容都显示完
+                                    setTimeout(() => {
+                                        stopTypewriter(assistantMsg);
+                                    }, CONFIG.TYPEWRITER_CLEANUP_DELAY);
+                                    scrollToBottom("smooth");
+                                    return;
+                                }
+
+                                // 解码并处理数据
+                                buffer += decoder.decode(value, { stream: true });
+                                const chunks = buffer.split("\n\n");
+                                buffer = chunks.pop() || ""; // 保留最后一个不完整的 chunk
+
+                                chunks.forEach(chunk => {
+                                    parseSSEData(chunk, assistantMsg);
+                                });
+
+                                // 继续读取
+                                read();
+                            })
+                            .catch(err => {
+                                handleError(err, assistantMsg, "读取流失败");
+                            });
+                    }
+
+                    read();
+                }
+
+                /**
+                 * 解析 SSE 格式数据
+                 * @param {string} chunk - 数据块
+                 * @param {Object} assistantMsg - AI 消息对象
+                 */
+                function parseSSEData(chunk, assistantMsg) {
+                    const trimmed = chunk.trim();
+                    if (!trimmed || !trimmed.startsWith("data: ")) return;
+
+                    try {
+                        const jsonStr = trimmed.replace("data: ", "");
+                        const data = JSON.parse(jsonStr);
+
+                        // data.type === "token"
+                        if (data.content) {
+                            assistantMsg.content += data.content;
+                            // 启动或继续打字机效果
+                            if (!typewriterTimers.has(assistantMsg)) {
+                                startTypewriter(assistantMsg);
+                            }
+                        }
+                    } catch (e) {
+                        console.error("解析 SSE 数据失败:", e, "原始数据:", trimmed);
+                    }
+                }
+
+                /**
+                 * 统一错误处理
+                 * @param {Error} err - 错误对象
+                 * @param {Object} assistantMsg - AI 消息对象
+                 * @param {string} message - 错误消息
+                 */
+                function handleError(err, assistantMsg, message) {
+                    console.error(message, err);
+                    assistantMsg.isThinking = false;
+                    stopTypewriter(assistantMsg);
+
+                    // 如果还没有内容，显示错误提示
+                    if (!assistantMsg.content) {
+                        assistantMsg.content = "抱歉，发生了错误，请稍后重试。";
+                        assistantMsg.displayedContent = assistantMsg.content;
+                    }
+
+                    scrollToBottom("smooth");
+                }
+
+                /**
+                 * 发送消息
+                 */
+                function send() {
+                    const userMessage = input.value.trim();
+                    if (!userMessage || isThinking.value) return;
+
+                    if (!activeChat.value) {
+                        console.warn("当前没有选中的会话，无法发送消息");
+                        return;
+                    }
+                    if (!ensureUserId()) return;
+
+                    // 添加用户消息
+                    activeChat.value.messages.push({
+                        role: "user",
+                        content: userMessage
+                    });
+                    // 发送消息后，该会话不再是空会话
+                    activeChat.value.isEmptyFromServer = false;
+                    input.value = "";
+                    scrollToBottom();
+
+                    // 创建 AI 消息占位符（使用 reactive 确保响应式更新）
+                    const assistantMsg = reactive({
+                        role: "assistant",
+                        content: "",
+                        displayedContent: "",
+                        isThinking: true
+                    });
+                    activeChat.value.messages.push(assistantMsg);
+                    scrollToBottom();
+
+                    // 发送请求
+                    fetch(CONFIG.API_URL, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            user_id: currentUserId.value,
+                            thread_id: activeChat.value.threadId,
+                            message: userMessage
+                        })
+                    })
+                        .then(response => {
+                            if (!response.ok) {
+                                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                            }
+                            if (!response.body) {
+                                throw new Error("响应体为空");
+                            }
+                            return response.body.getReader();
+                        })
+                        .then(reader => {
+                            handleStreamResponse(reader, assistantMsg);
+                        })
+                        .catch(err => {
+                            handleError(err, assistantMsg, "请求失败");
+                        });
+                }
+
+                // ========== 返回给模板使用的数据和方法 ==========
+                // ========== 生命周期 ==========
+                /**
+                 * 从后端加载用户的会话列表
+                 */
+                async function loadThreads() {
+                    if (!currentUserId.value) return;
+
+                    try {
+                        const response = await fetch(`${CONFIG.THREADS_API_URL}/${encodeURIComponent(currentUserId.value)}`);
+                        if (!response.ok) {
+                            console.error('加载会话列表失败:', response.statusText);
+                            return;
+                        }
+
+                        const data = await response.json();
+                        if (data.threads && data.threads.length > 0) {
+                            // 清空现有会话，加载持久化的会话
+                            chats.value = data.threads.map((t, index) => ({
+                                id: t.id,
+                                name: t.title || `会话 ${t.id.slice(0, 8)}`,
+                                userId: t.user_id,
+                                threadId: t.id,
+                                preview: t.preview || '暂无消息',
+                                isEmptyFromServer: t.is_empty,  // 使用后端返回的空会话状态
+                                messages: [] // 消息稍后加载
+                            }));
+
+                            // 默认选中第一个会话并加载其历史消息
+                            if (chats.value.length > 0) {
+                                activeChatId.value = chats.value[0].id;
+                                await loadThreadHistory(chats.value[0].threadId);
+                            }
+                        } else {
+                            // 没有历史会话，调用后端创建一个新会话
+                            await createNewChat();
+                        }
+                    } catch (err) {
+                        console.error('加载会话列表出错:', err);
+                        // 出错时也尝试创建新会话
+                        await createNewChat();
+                    }
+                }
+
+                /**
+                 * 加载指定会话的历史消息
+                 */
+                async function loadThreadHistory(threadId) {
+                    if (!currentUserId.value || !threadId) return;
+
+                    try {
+                        const response = await fetch(
+                            `${CONFIG.THREADS_API_URL}/${encodeURIComponent(currentUserId.value)}/${encodeURIComponent(threadId)}/history`
+                        );
+                        if (!response.ok) {
+                            console.error('加载历史消息失败:', response.statusText);
+                            return;
+                        }
+
+                        const data = await response.json();
+                        const chat = chats.value.find(c => c.threadId === threadId);
+                        if (chat && data.messages) {
+                            // 转换消息格式并添加 displayedContent
+                            chat.messages = data.messages.map(m => ({
+                                role: m.role,
+                                content: m.content,
+                                displayedContent: m.content
+                            }));
+
+                            // 更新预览
+                            if (chat.messages.length > 0) {
+                                const lastMsg = chat.messages[chat.messages.length - 1];
+                                chat.preview = lastMsg.content.slice(0, 50) + (lastMsg.content.length > 50 ? '...' : '');
+                            }
+
+                            scrollToBottom('auto');
+                        }
+                    } catch (err) {
+                        console.error('加载历史消息出错:', err);
+                    }
+                }
+
+
+
+                /**
+                 * 删除会话
+                 */
+                async function deleteChat(chatId) {
+                    if (!confirm('确定要删除这个会话吗？')) return;
+
+                    try {
+                        const response = await fetch(`${CONFIG.THREADS_API_URL}/${chatId}`, {
+                            method: "DELETE"
+                        });
+
+                        if (!response.ok) {
+                            throw new Error(`删除失败: ${response.statusText}`);
+                        }
+
+                        // 从本地列表移除
+                        const index = chats.value.findIndex(c => c.id === chatId);
+                        if (index > -1) {
+                            chats.value.splice(index, 1);
+                        }
+
+                        // 如果删除的是当前会话，切换到第一个或创建新会话
+                        if (activeChatId.value === chatId) {
+                            if (chats.value.length > 0) {
+                                activeChatId.value = chats.value[0].id;
+                                await loadThreadHistory(chats.value[0].threadId);
+                            } else {
+                                // 所有会话都被删除了，创建一个新会话
+                                await createNewChat();
+                            }
+                        }
+                    } catch (err) {
+                        console.error('删除会话失败:', err);
+                        alert('删除失败，请重试');
+                    }
+                }
+
+                onMounted(async () => {
+                    const saved = localStorage.getItem("chatUserId");
+                    if (saved) {
+                        currentUserId.value = saved;
+                        updateAllChatUserIds(saved);
+                        // 加载持久化的会话列表
+                        await loadThreads();
+                    } else {
+                        openUserModal();
+                    }
+                });
+
+                return {
+                    // 状态
+                    chats,
+                    activeChatId,
+                    activeChat,
+                    messages,
+                    input,
+                    isThinking,
+                    hasEmptyChat,
+                    chatMain,
+                    currentUserId,
+                    isUserModalOpen,
+                    tempUserInput,
+                    // 方法
+                    send,
+                    handleEnter,
+                    setActiveChat,
+                    createNewChat,
+                    openUserModal,
+                    closeUserModal,
+                    confirmUserId,
+                    deleteChat,
+                    isChatEmpty
+                };
+            }
+        }).mount("#app");
+    </script>
+</body>
+
+</html>
