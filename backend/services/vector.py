@@ -9,16 +9,17 @@ from qdrant_client import QdrantClient
 from langchain_qdrant import QdrantVectorStore
 from dotenv import load_dotenv
 from langchain_core.documents import Document
-from qdrant_client.models import VectorParams, Distance
+from qdrant_client.models import VectorParams, Distance, Filter, FieldCondition, MatchValue
+
+from logger import get_logger
 
 load_dotenv()
+
+logger = get_logger(__name__)
 
 
 class VectorService:
     """向量存储服务类（单例模式）"""
-    
-    # 默认集合名称
-    DEFAULT_COLLECTION_NAME = "demo"
     
     _instance = None
     _initialized = False
@@ -32,9 +33,13 @@ class VectorService:
         # 避免重复初始化
         if VectorService._initialized:
             return
-            
+        
+        from config import get_settings
+        settings = get_settings()
+        
+        self.settings = settings.vector
         self.client = QdrantClient(
-            url="http://localhost:6333"
+            url=self.settings.qdrant_url
         )
         self.embeddings = OpenAIEmbeddings(
             model="embedding-3"
@@ -45,14 +50,14 @@ class VectorService:
         
         self.vectorstore = QdrantVectorStore(
             client=self.client,
-            collection_name=self.DEFAULT_COLLECTION_NAME,
+            collection_name=self.settings.collection_name,
             embedding=self.embeddings,
         )
 
         self.retriever = self.vectorstore.as_retriever(
             search_type="mmr",
             search_kwargs={
-                "k": 2,
+                "k": 3,
                 "lambda_mult": 0.5  # α 参数，越大越倾向 query 相似度
             }
         )
@@ -64,37 +69,49 @@ class VectorService:
         确保指定的集合存在，如果不存在则创建
         
         Args:
-            collection_name: 集合名称，默认使用 DEFAULT_COLLECTION_NAME
+            collection_name: 集合名称，默认使用配置中的 collection_name
         """
-        collection_name = collection_name or self.DEFAULT_COLLECTION_NAME
+        collection_name = collection_name or self.settings.collection_name
         
         if not self.client.collection_exists(collection_name=collection_name):
             try:
-                print(f"集合 '{collection_name}' 不存在，正在创建...")
-                # 通过一次嵌入调用获取向量维度
-                dummy_vector = self.embeddings.embed_query("初始化")
-                dim = len(dummy_vector)
-                
+                logger.info(f"集合 '{collection_name}' 不存在，正在创建...")
+                dim = self.settings.embedding_dim
                 self.client.create_collection(
                     collection_name=collection_name,
                     vectors_config=VectorParams(size=dim, distance=Distance.COSINE)
                 )
-                print(f"已创建集合 '{collection_name}'，向量维度: {dim}")
+                logger.info(f"已创建集合 '{collection_name}'，向量维度: {dim}")
             except Exception as e:
-                print(f"创建集合时发生错误: {e}")
+                logger.error(f"创建集合时发生错误: {e}")
 
-    def search(self, query: str) -> list[Document]:
+    def search(self, query: str, category: str = None) -> list[Document]:
         """
         搜索相关文档
         
         Args:
             query: 搜索查询文本
+            category: 分类 filtering (optional)
             
         Returns:
             相关文档列表
         """
-        docs = self.retriever.invoke(query)
-        return docs
+        kwargs = {
+            "k": 3,
+            "lambda_mult": 0.5
+        }
+        
+        if category:
+            kwargs["filter"] = Filter(
+                must=[
+                    FieldCondition(
+                        key="metadata.category",
+                        match=MatchValue(value=category)
+                    )
+                ]
+            )
+            
+        return self.vectorstore.max_marginal_relevance_search(query, **kwargs)
 
     def ingest(self, data_dir: str = "data") -> dict:
         """
@@ -133,18 +150,27 @@ class VectorService:
 
         for file_path in files:
             try:
+                # 获取父目录名称作为 category
+                category = os.path.basename(os.path.dirname(file_path))
+                
                 with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
-                    docs.append(Document(page_content=content, metadata={"source": file_path}))
+                    docs.append(Document(
+                        page_content=content, 
+                        metadata={
+                            "source": file_path,
+                            "category": category
+                        }
+                    ))
             except Exception as e:
-                print(f"读取文件失败 {file_path}: {e}")
+                logger.warning(f"读取文件失败 {file_path}: {e}")
 
         if not docs:
             return {"status": "warning", "message": "没有有效的文档被加载", "count": 0}
 
         # 删除现有集合
         try:
-            self.client.delete_collection(self.DEFAULT_COLLECTION_NAME)
+            self.client.delete_collection(self.settings.collection_name)
         except Exception:
             pass  # 集合不存在时忽略
 
@@ -154,12 +180,21 @@ class VectorService:
         # 重新初始化 vectorstore（因为集合被重建了）
         self.vectorstore = QdrantVectorStore(
             client=self.client,
-            collection_name=self.DEFAULT_COLLECTION_NAME,
+            collection_name=self.settings.collection_name,
             embedding=self.embeddings,
         )
 
         # 添加文档到向量库
         self.vectorstore.add_documents(docs)
+        
+        # 更新 retriever
+        self.retriever = self.vectorstore.as_retriever(
+            search_type="mmr",
+            search_kwargs={
+                "k": 2,
+                "lambda_mult": 0.5 
+            }
+        )
         
         # 更新 retriever
         self.retriever = self.vectorstore.as_retriever(
@@ -179,16 +214,15 @@ class VectorService:
 
 # ==================== 依赖注入 ====================
 
-def get_vector_service() -> VectorService:
-    """获取向量服务实例（用于 FastAPI 依赖注入）"""
-    return VectorService()
-
-
 # 延迟初始化的单例访问器
 _vector_service = None
 
-def get_vector_service_instance() -> VectorService:
-    """获取向量服务单例实例（延迟初始化）"""
+def get_vector_service() -> VectorService:
+    """
+    获取向量服务实例（用于 FastAPI 依赖注入）
+    
+    使用延迟初始化的单例模式，确保全局只有一个实例。
+    """
     global _vector_service
     if _vector_service is None:
         _vector_service = VectorService()

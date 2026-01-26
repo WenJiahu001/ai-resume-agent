@@ -38,37 +38,45 @@ class DatabaseConfig:
         return pymysql.connect(**kwargs)
 
     def init_tables(self) -> None:
-        """初始化用户表和会话表"""
+        """
+        初始化用户表和会话表
+        
+        从 sql/init_tables.sql 文件读取 DDL 语句执行
+        """
+        import os
+        from logger import get_logger
+        
+        logger = get_logger(__name__)
+        
+        # 获取 SQL 文件路径
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        sql_file = os.path.join(current_dir, "sql", "init_tables.sql")
+        
+        if not os.path.exists(sql_file):
+            logger.warning(f"SQL 初始化文件不存在: {sql_file}")
+            return
+        
         conn = self.get_connection()
         try:
+            with open(sql_file, 'r', encoding='utf-8') as f:
+                sql_content = f.read()
+            
+            # 分割 SQL 语句（按分号分割，过滤空语句和注释行）
+            statements = [
+                stmt.strip() 
+                for stmt in sql_content.split(';') 
+                if stmt.strip() and not stmt.strip().startswith('--')
+            ]
+            
             with conn.cursor() as cur:
-                # 创建用户表
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS users (
-                        id VARCHAR(36) PRIMARY KEY COMMENT '用户唯一标识（UUID）',
-                        username VARCHAR(100) NOT NULL UNIQUE COMMENT '用户名，唯一',
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'
-                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户表'
-                """)
-
-                # 创建会话表
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS threads (
-                        id VARCHAR(36) PRIMARY KEY COMMENT '会话唯一标识（UUID）',
-                        user_id VARCHAR(36) NOT NULL COMMENT '所属用户ID',
-                        title VARCHAR(255) COMMENT '会话标题（可从首条消息自动生成）',
-                        preview TEXT COMMENT '最后一条消息预览',
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-                        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-                        INDEX idx_user_id (user_id) COMMENT '用户ID索引，加速按用户查询',
-                        INDEX idx_updated_at (updated_at) COMMENT '更新时间索引，加速排序查询'
-                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='会话表'
-                """)
-
+                for stmt in statements:
+                    if stmt:
+                        cur.execute(stmt)
                 conn.commit()
-                print("✅ 用户表和会话表初始化完成")
+            
+            logger.info("用户表和会话表初始化完成")
+        except Exception as e:
+            logger.error(f"初始化数据库表失败: {e}")
         finally:
             conn.close()
 
@@ -77,9 +85,17 @@ class DatabaseConfig:
 class ModelConfig:
     """模型配置"""
     model_name: str = field(default_factory=lambda: os.getenv("MODEL_NAME", "openai:glm-4.5"))
-    temperature: float = field(default_factory=lambda: float(os.getenv("MODEL_TEMPERATURE", "0.5")))
-    timeout: int = field(default_factory=lambda: int(os.getenv("MODEL_TIMEOUT", "10")))
+    temperature: float = field(default_factory=lambda: float(os.getenv("MODEL_TEMPERATURE", "0.3")))
+    timeout: int = field(default_factory=lambda: int(os.getenv("MODEL_TIMEOUT", "60")))
     max_tokens: int = field(default_factory=lambda: int(os.getenv("MODEL_MAX_TOKENS", "50")))
+
+
+@dataclass(frozen=True)
+class VectorConfig:
+    """向量存储配置"""
+    embedding_dim: int = field(default_factory=lambda: int(os.getenv("EMBEDDING_DIM", "1024")))
+    qdrant_url: str = field(default_factory=lambda: os.getenv("QDRANT_URL", "http://localhost:6333"))
+    collection_name: str = field(default_factory=lambda: os.getenv("QDRANT_COLLECTION", "demo"))
 
 
 @dataclass(frozen=True)
@@ -96,6 +112,7 @@ class Settings:
     """全局配置容器"""
     db: DatabaseConfig = field(default_factory=DatabaseConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
+    vector: VectorConfig = field(default_factory=VectorConfig)
     app: AppConfig = field(default_factory=AppConfig)
 
 

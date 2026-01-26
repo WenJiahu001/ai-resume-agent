@@ -36,15 +36,25 @@ def create_thread(
 
 
 @router.get("/{user_id}", response_model=ThreadListResponse)
-def get_threads(user_id: str, service: ThreadService = Depends(get_thread_service)):
+def get_threads(
+    user_id: str,
+    page: int = 1,
+    page_size: int = 20,
+    service: ThreadService = Depends(get_thread_service)
+):
     """
-    获取用户的会话列表
+    获取用户的会话列表（分页）
 
     返回指定用户的所有会话，包含每个会话最后一条消息的预览。
     会话按更新时间倒序排列。
     """
-    threads = service.get_user_threads(user_id)
-    return ThreadListResponse(threads=threads)
+    threads, total = service.get_user_threads(user_id, page, page_size)
+    return ThreadListResponse(
+        threads=threads,
+        total=total,
+        page=page,
+        page_size=page_size
+    )
 
 
 @router.get("/{user_id}/{thread_id}/history", response_model=HistoryResponse)

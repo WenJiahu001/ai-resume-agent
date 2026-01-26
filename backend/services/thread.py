@@ -145,39 +145,54 @@ class ThreadService:
         finally:
             conn.close()
 
-    def get_user_threads(self, user_id: str) -> List[ThreadItem]:
+    def get_user_threads(self, user_id: str, page: int = 1, page_size: int = 20) -> tuple[List[ThreadItem], int]:
         """
-        获取指定用户的所有会话列表
+        获取指定用户的所有会话列表（分页）
 
         Args:
             user_id: 用户 ID
+            page: 页码，从 1 开始
+            page_size: 每页数量
 
         Returns:
-            会话列表（按更新时间倒序）
+            (会话列表, 总数)
         """
         conn = self._get_connection()
         checkpointer, cp_conn = self._get_checkpointer()
 
         try:
             threads = []
+            total = 0
+            offset = (page - 1) * page_size
+
             with conn.cursor() as cur:
-                # 查询用户的所有会话，按更新时间倒序
+                # 1. 查询总数
                 cur.execute(
-                    """SELECT * FROM threads 
-                       WHERE user_id = %s 
-                       ORDER BY updated_at DESC""",
+                    "SELECT COUNT(*) as total FROM threads WHERE user_id = %s",
                     (user_id,)
                 )
-                rows = cur.fetchall()
+                total_row = cur.fetchone()
+                total = total_row["total"] if total_row else 0
 
-                for row in rows:
-                    # 获取实时的消息预览和消息数量
-                    preview = self._get_message_preview(checkpointer, row["id"])
-                    message_count = self._get_message_count(checkpointer, row["id"])
-                    is_empty = message_count == 0
-                    threads.append(self._row_to_thread_item(row, preview, is_empty))
+                if total > 0:
+                    # 2. 查询分页数据
+                    cur.execute(
+                        """SELECT * FROM threads 
+                           WHERE user_id = %s 
+                           ORDER BY updated_at DESC
+                           LIMIT %s OFFSET %s""",
+                        (user_id, page_size, offset)
+                    )
+                    rows = cur.fetchall()
 
-            return threads
+                    for row in rows:
+                        # 获取实时的消息预览和消息数量
+                        preview = self._get_message_preview(checkpointer, row["id"])
+                        message_count = self._get_message_count(checkpointer, row["id"])
+                        is_empty = message_count == 0
+                        threads.append(self._row_to_thread_item(row, preview, is_empty))
+
+            return threads, total
         finally:
             conn.close()
             cp_conn.close()
@@ -192,7 +207,7 @@ class ThreadService:
         Returns:
             是否存在空会话
         """
-        threads = self.get_user_threads(user_id)
+        threads, _ = self.get_user_threads(user_id)
         return any(thread.is_empty for thread in threads)
 
     def get_thread_history(self, user_id: str, thread_id: str) -> List[MessageItem]:

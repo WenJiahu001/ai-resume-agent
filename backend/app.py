@@ -4,11 +4,16 @@
 
 启动命令: uv run uvicorn app:app --reload
 """
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from config import get_settings
 from routes import chat_router, thread_router, vector_router
+from exceptions import AppException, NotFoundError, ValidationError
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def create_app() -> FastAPI:
@@ -38,7 +43,46 @@ def create_app() -> FastAPI:
     app.include_router(thread_router)
     app.include_router(vector_router)
 
+    # 注册全局异常处理器
+    register_exception_handlers(app)
+
     return app
+
+
+def register_exception_handlers(app: FastAPI) -> None:
+    """注册全局异常处理器"""
+    
+    @app.exception_handler(NotFoundError)
+    async def not_found_handler(request: Request, exc: NotFoundError):
+        logger.warning(f"资源未找到: {exc.message}")
+        return JSONResponse(
+            status_code=404,
+            content={"code": exc.code, "message": exc.message}
+        )
+    
+    @app.exception_handler(ValidationError)
+    async def validation_handler(request: Request, exc: ValidationError):
+        logger.warning(f"验证错误: {exc.message}")
+        return JSONResponse(
+            status_code=400,
+            content={"code": exc.code, "message": exc.message, "field": exc.field}
+        )
+    
+    @app.exception_handler(AppException)
+    async def app_exception_handler(request: Request, exc: AppException):
+        logger.error(f"应用异常: {exc.message}")
+        return JSONResponse(
+            status_code=500,
+            content={"code": exc.code, "message": exc.message}
+        )
+    
+    @app.exception_handler(Exception)
+    async def general_exception_handler(request: Request, exc: Exception):
+        logger.error(f"未处理异常: {str(exc)}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"code": "INTERNAL_ERROR", "message": "服务器内部错误"}
+        )
 
 
 # 创建应用实例

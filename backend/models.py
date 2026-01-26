@@ -57,6 +57,9 @@ class ThreadItem(BaseModel):
 class ThreadListResponse(BaseModel):
     """会话列表响应"""
     threads: List[ThreadItem]
+    total: int = Field(..., description="总记录数")
+    page: int = Field(..., description="当前页码")
+    page_size: int = Field(..., description="每页数量")
 
 
 class HistoryResponse(BaseModel):
