@@ -34,7 +34,8 @@
                     </button>
                 </div>
                 <!-- 列表区域 -->
-                <div class="flex-1 overflow-y-auto py-3 px-3 space-y-1 custom-scrollbar">
+                <div ref="chatListRef" @scroll="handleScroll"
+                    class="flex-1 overflow-y-auto py-3 px-3 space-y-1 custom-scrollbar">
                     <div v-for="chat in chats" :key="chat.id" @click="setActiveChat(chat.id)"
                         class="relative w-full px-3 py-3 text-left flex flex-col gap-1 rounded-xl cursor-pointer border transition-all duration-200 group"
                         :class="chat.id === activeChatId
@@ -72,28 +73,21 @@
                             </button>
                         </div>
                     </div>
+                    <!-- 加载更多指示器 -->
+                    <div v-if="isLoadingMore"
+                        class="py-2 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+                        <span class="h-1.5 w-1.5 rounded-full bg-slate-400 animate-bounce"></span>
+                        <span
+                            class="h-1.5 w-1.5 rounded-full bg-slate-400 animate-bounce [animation-delay:0.15s]"></span>
+                        <span
+                            class="h-1.5 w-1.5 rounded-full bg-slate-400 animate-bounce [animation-delay:0.3s]"></span>
+                    </div>
+                    <div v-if="!hasMore && chats.length > 0" class="py-4 text-center text-xs text-slate-300">
+                        没有更多数据了
+                    </div>
                 </div>
 
-                <!-- 分页底部 -->
-                <div
-                    class="px-4 py-3 border-t border-slate-200/60 bg-slate-50/50 backdrop-blur flex items-center justify-between text-xs text-slate-500">
-                    <button @click="prevPage" :disabled="page <= 1"
-                        class="p-1 hover:bg-white hover:shadow-sm rounded-md hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-500 cursor-pointer disabled:cursor-not-allowed transition-all">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7">
-                            </path>
-                        </svg>
-                    </button>
-                    <span class="font-semibold tabular-nums text-slate-400">{{ page }} / {{ Math.max(1, Math.ceil(total
-                        / pageSize)) }}</span>
-                    <button @click="nextPage" :disabled="page * pageSize >= total"
-                        class="p-1 hover:bg-white hover:shadow-sm rounded-md hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-500 cursor-pointer disabled:cursor-not-allowed transition-all">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7">
-                            </path>
-                        </svg>
-                    </button>
-                </div>
+                <!-- 分页底部 已移除 -->
             </aside>
 
             <!-- 右侧主聊天区域 -->
@@ -296,8 +290,14 @@
 
                 // 分页状态
                 const page = ref(1);
-                const pageSize = ref(20);
+                const pageSize = ref(10);
                 const total = ref(0);
+                const isLoadingMore = ref(false);
+                const chatListRef = ref(null);
+
+                const hasMore = computed(() => {
+                    return chats.value.length < total.value;
+                });
 
                 // ========== 计算属性 ==========
                 const activeChat = computed(() =>
@@ -496,8 +496,7 @@
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({
-                                user_id: currentUserId.value,
-                                title: `新会话 ${chats.value.length + 1}`
+                                user_id: currentUserId.value
                             })
                         });
 
@@ -505,8 +504,11 @@
                             throw new Error(`创建会话失败: ${response.statusText}`);
                         }
 
-                        const data = await response.json();
-                        const thread = data.thread;
+                        const res = await response.json();
+                        if (res.code !== "SUCCESS") {
+                            throw new Error(res.message);
+                        }
+                        const thread = res.data.thread;
 
                         // 添加到本地列表顶部
                         chats.value.unshift({
@@ -523,7 +525,7 @@
                         scrollToBottom("auto");
                     } catch (err) {
                         console.error('创建会话失败:', err);
-                        alert('创建会话失败，请重试');
+                        alert(`创建会话失败: ${err.message}`);
                     }
                 }
 
@@ -696,17 +698,36 @@
                 /**
                  * 从后端加载用户的会话列表
                  */
-                async function loadThreads() {
+                /**
+                 * 从后端加载用户的会话列表
+                 * @param {boolean} isAppend - 是否追加数据
+                 */
+                async function loadThreads(isAppend = false) {
                     if (!currentUserId.value) return;
+                    if (isLoadingMore.value) return;
 
+                    isLoadingMore.value = true;
                     try {
                         const response = await fetch(`${CONFIG.THREADS_API_URL}/${encodeURIComponent(currentUserId.value)}?page=${page.value}&page_size=${pageSize.value}`);
                         if (!response.ok) {
-                            console.error('加载会话列表失败:', response.statusText);
-                            return;
+                            const errText = await response.text();
+                            console.error('加载会话列表失败:', response.statusText, errText);
+                            try {
+                                const errJson = JSON.parse(errText);
+                                if (errJson.detail) throw new Error(errJson.detail);
+                            } catch (e) {
+                                // ignore
+                            }
+                            throw new Error(response.statusText);
                         }
 
-                        const data = await response.json();
+                        const res = await response.json();
+                        if (res.code !== "SUCCESS") {
+                            console.error('加载会话列表失败:', res.message);
+                            alert(`加载会话列表失败: ${res.message}`);
+                            return;
+                        }
+                        const data = res.data;
 
                         // 更新总数
                         if (data.total !== undefined) {
@@ -714,34 +735,56 @@
                         }
 
                         if (data.threads && data.threads.length > 0) {
-                            // 清空现有会话，加载持久化的会话
-                            chats.value = data.threads.map((t, index) => ({
+                            const newThreads = data.threads.map((t, index) => ({
                                 id: t.id,
                                 name: t.title || `会话 ${t.id.slice(0, 8)}`,
                                 userId: t.user_id,
                                 threadId: t.id,
                                 preview: t.preview || '暂无消息',
-                                isEmptyFromServer: t.is_empty,  // 使用后端返回的空会话状态
-                                messages: [] // 消息稍后加载
+                                isEmptyFromServer: t.is_empty,
+                                messages: []
                             }));
 
-                            // 默认选中第一个会话并加载其历史消息
-                            // 仅当 activeChatId 为空或者当前选中的会话不在列表中时，才切换
-                            const currentChatStillExists = chats.value.find(c => c.id === activeChatId.value);
-                            if (chats.value.length > 0 && !currentChatStillExists) {
-                                activeChatId.value = chats.value[0].id;
-                                await loadThreadHistory(chats.value[0].threadId);
+                            if (isAppend) {
+                                chats.value.push(...newThreads);
+                            } else {
+                                chats.value = newThreads;
+                                // 默认选中第一个会话（仅在第一页已加载且未选中时）
+                                const currentChatStillExists = chats.value.find(c => c.id === activeChatId.value);
+                                if (chats.value.length > 0 && !currentChatStillExists) {
+                                    activeChatId.value = chats.value[0].id;
+                                    await loadThreadHistory(chats.value[0].threadId);
+                                }
                             }
-                        } else if (page.value === 1) {
-                            // 没有历史会话，调用后端创建一个新会话
-                            await createNewChat();
+                        } else {
+                            // 如果是第一页且没有数据，尝试创建新会话
+                            if (page.value === 1 && !isAppend) {
+                                await createNewChat();
+                            }
                         }
                     } catch (err) {
                         console.error('加载会话列表出错:', err);
-                        // 出错时也尝试创建新会话
-                        await createNewChat();
+                        if (page.value === 1 && !isAppend) {
+                            await createNewChat();
+                        }
+                    } finally {
+                        isLoadingMore.value = false;
                     }
                 }
+
+                // 滚动处理
+                const handleScroll = () => {
+                    const el = chatListRef.value;
+                    if (!el) return;
+
+                    // 距离底部 50px 时加载更多
+                    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 50) {
+                        if (hasMore.value && !isLoadingMore.value) {
+                            page.value++;
+                            loadThreads(true);
+                        }
+                    }
+                };
 
                 /**
                  * 加载指定会话的历史消息
@@ -754,11 +797,24 @@
                             `${CONFIG.THREADS_API_URL}/${encodeURIComponent(currentUserId.value)}/${encodeURIComponent(threadId)}/history`
                         );
                         if (!response.ok) {
-                            console.error('加载历史消息失败:', response.statusText);
-                            return;
+                            const errText = await response.text();
+                            console.error('加载历史消息失败:', response.statusText, errText);
+                            try {
+                                const errJson = JSON.parse(errText);
+                                if (errJson.detail) throw new Error(errJson.detail);
+                            } catch (e) {
+                                // ignore
+                            }
+                            throw new Error(response.statusText || '加载历史消息失败');
                         }
 
-                        const data = await response.json();
+                        const res = await response.json();
+                        if (res.code !== "SUCCESS") {
+                            console.error('加载历史消息失败:', res.message);
+                            alert(`加载历史消息失败: ${res.message}`);
+                            return;
+                        }
+                        const data = res.data;
                         const chat = chats.value.find(c => c.threadId === threadId);
                         if (chat && data.messages) {
                             // 转换消息格式并添加 displayedContent
@@ -778,6 +834,7 @@
                         }
                     } catch (err) {
                         console.error('加载历史消息出错:', err);
+                        alert(`加载历史消息出错: ${err.message}`);
                     }
                 }
 
@@ -794,8 +851,9 @@
                             method: "DELETE"
                         });
 
-                        if (!response.ok) {
-                            throw new Error(`删除失败: ${response.statusText}`);
+                        const res = await response.json();
+                        if (res.code !== "SUCCESS") {
+                            throw new Error(`删除失败: ${res.message}`);
                         }
 
                         // 从本地列表移除
@@ -869,13 +927,15 @@
                     closeUserModal,
                     confirmUserId,
                     deleteChat,
+                    isLoadingMore,
+                    hasMore,
+                    chatListRef,
+                    handleScroll,
                     isChatEmpty,
                     // 分页
                     page,
                     pageSize,
-                    total,
-                    prevPage,
-                    nextPage
+                    total
                 };
             }
         }).mount("#app");

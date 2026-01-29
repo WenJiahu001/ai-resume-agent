@@ -93,7 +93,6 @@ class ModelConfig:
 @dataclass(frozen=True)
 class VectorConfig:
     """向量存储配置"""
-    embedding_dim: int = field(default_factory=lambda: int(os.getenv("EMBEDDING_DIM", "1024")))
     qdrant_url: str = field(default_factory=lambda: os.getenv("QDRANT_URL", "http://localhost:6333"))
     collection_name: str = field(default_factory=lambda: os.getenv("QDRANT_COLLECTION", "demo"))
 

@@ -19,6 +19,7 @@ RESUME_ASSISTANT_PROMPT = """
 - 当面试官询问特定技能时（如"Java", "Spring Boot", "底层原理"），通过关键词提取调用 `search` 工具。category参数应该为：个人技能
 - 当面试官询问过往工作经历时，通过关键词提取，调用 `search` 工具。category参数应该为：工作经历
 - 当面试官询问教育经历时，通过关键词提取调用 `search` 工具。category参数应该为：教育经历
+- 当面试官询问项目经历时，通过关键词提取调用 `search` 工具。category参数应该为：项目经历
 - 当面试官询问学历或资格证时，通过关键词提取调用 `search` 工具。category参数应该为：证书
 
 # 边界与异常处理

@@ -8,22 +8,19 @@ import json
 from datetime import datetime
 from typing import Iterator
 
-# from langchain_core.globals import set_debug
-# set_debug(True)  # 开启 LangChain 调试模式
-
 from langchain.chat_models import init_chat_model
+from langchain_core.documents import Document
+from langchain_core.messages import SystemMessage, ToolMessage
+from langchain_core.tools import tool
 from langgraph.checkpoint.mysql.pymysql import PyMySQLSaver
 from langgraph.prebuilt import create_react_agent as create_agent
 
 from config import get_settings
+from logger import get_logger
 from models import ChatRequest
 from prompts import SYSTEM_PROMPT
-from logger import get_logger
-
-from langchain_core.tools import tool
-from langchain_core.documents import Document
-from langchain_core.messages import SystemMessage, ToolMessage
 from services.vector import get_vector_service
+
 logger = get_logger(__name__)
 
 
@@ -96,10 +93,6 @@ class AgentService:
     def get_agent(self):
         """获取或创建 Agent 实例"""
         if self._agent is None:
-            # global GLOBAL_VECTOR_STORE
-            # if GLOBAL_VECTOR_STORE is None:
-            #     GLOBAL_VECTOR_STORE = myVector2()
-
             model = self._create_model()
             self._checkpointer = self._create_checkpointer()
 

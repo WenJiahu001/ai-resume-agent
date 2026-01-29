@@ -64,6 +64,11 @@ class VectorService:
         
         VectorService._initialized = True
     
+    def _get_embedding_dim(self) -> int:
+        """从嵌入模型获取实际的向量维度"""
+        test_embedding = self.embeddings.embed_query("test")
+        return len(test_embedding)
+    
     def _ensure_collection_exists(self, collection_name: str = None):
         """
         确保指定的集合存在，如果不存在则创建
@@ -73,17 +78,20 @@ class VectorService:
         """
         collection_name = collection_name or self.settings.collection_name
         
-        if not self.client.collection_exists(collection_name=collection_name):
-            try:
-                logger.info(f"集合 '{collection_name}' 不存在，正在创建...")
-                dim = self.settings.embedding_dim
-                self.client.create_collection(
-                    collection_name=collection_name,
-                    vectors_config=VectorParams(size=dim, distance=Distance.COSINE)
-                )
-                logger.info(f"已创建集合 '{collection_name}'，向量维度: {dim}")
-            except Exception as e:
-                logger.error(f"创建集合时发生错误: {e}")
+        if self.client.collection_exists(collection_name=collection_name):
+            logger.info(f"集合 '{collection_name}' 已存在")
+            return
+        
+        try:
+            dim = self._get_embedding_dim()
+            logger.info(f"正在创建集合 '{collection_name}'，向量维度: {dim}")
+            self.client.create_collection(
+                collection_name=collection_name,
+                vectors_config=VectorParams(size=dim, distance=Distance.COSINE)
+            )
+            logger.info(f"已创建集合 '{collection_name}'")
+        except Exception as e:
+            logger.error(f"创建集合时发生错误: {e}")
 
     def search(self, query: str, category: str = None) -> list[Document]:
         """
@@ -187,22 +195,10 @@ class VectorService:
         # 添加文档到向量库
         self.vectorstore.add_documents(docs)
         
-        # 更新 retriever
+        # 更新 retriever（使用 MMR 算法平衡相关性和多样性）
         self.retriever = self.vectorstore.as_retriever(
             search_type="mmr",
-            search_kwargs={
-                "k": 2,
-                "lambda_mult": 0.5 
-            }
-        )
-        
-        # 更新 retriever
-        self.retriever = self.vectorstore.as_retriever(
-            search_type="mmr",
-            search_kwargs={
-                "k": 2,
-                "lambda_mult": 0.5 
-            }
+            search_kwargs={"k": 3, "lambda_mult": 0.5}
         )
         
         return {

@@ -10,6 +10,7 @@ from typing import List, Optional, Dict, Any
 from langgraph.checkpoint.mysql.pymysql import PyMySQLSaver
 
 from config import get_settings
+from exceptions import ValidationError
 from models import MessageItem, ThreadItem
 from services.user import UserService, get_user_service
 
@@ -55,7 +56,7 @@ class ThreadService:
 
     def _get_message_count(self, checkpointer: PyMySQLSaver, thread_id: str) -> int:
         """获取会话的消息数量"""
-        config = {"configurable": {"thread_id": thread_id}}
+        config: dict[str, dict[str, str]] = {"configurable": {"thread_id": thread_id}}
         ct = checkpointer.get_tuple(config)
 
         if not ct:
@@ -100,13 +101,20 @@ class ThreadService:
 
         # 检查是否已存在空会话
         if self.has_empty_thread(user_id):
-            raise ValueError("已存在一个空会话，请先在该会话中发送消息后再新建会话")
+            raise ValidationError("已存在一个空会话，请先在该会话中发送消息后再新建会话")
 
         thread_id = str(uuid.uuid4())
         conn = self._get_connection()
 
         try:
             with conn.cursor() as cur:
+                # 如果未提供标题，自动生成 "新会话 N"
+                if not title:
+                    cur.execute("SELECT COUNT(*) as total FROM threads WHERE user_id = %s", (user_id,))
+                    count_row = cur.fetchone()
+                    count = count_row["total"] if count_row else 0
+                    title = f"新会话 {count + 1}"
+
                 cur.execute(
                     "INSERT INTO threads (id, user_id, title) VALUES (%s, %s, %s)",
                     (thread_id, user_id, title)
