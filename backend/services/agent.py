@@ -114,6 +114,7 @@ class AgentService:
 
 # ==================== 工具函数 ====================
 
+# todo 报错应当要处理
 @tool
 def search(query: str, category: str = None) -> list[Document]:
     """
@@ -165,13 +166,12 @@ def stream_chat(agent, req: ChatRequest) -> Iterator[str]:
             agent_chunk = chunk.get("agent")
             if agent_chunk and "messages" in agent_chunk:
                 msg = agent_chunk["messages"][-1]
-                if msg.content and msg.content != "\n":
-                    yield sse_format(
-                        json.dumps(
-                            {"type": "token", "content": msg.content},
-                            ensure_ascii=False,
-                        )
+                yield sse_format(
+                    json.dumps(
+                        {"type": "token", "content": msg.content},
+                        ensure_ascii=False,
                     )
+                )
         yield sse_format(json.dumps({"type": "end"}))
     except Exception as exc:
         yield sse_format(json.dumps({"type": "error", "content": str(exc)}))

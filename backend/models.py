@@ -5,7 +5,7 @@ Pydantic 数据模型
 定义 API 请求和响应的数据结构。
 """
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 from pydantic import BaseModel, Field
 
@@ -38,8 +38,13 @@ class UpdateThreadRequest(BaseModel):
 
 class MessageItem(BaseModel):
     """单条消息"""
-    role: str = Field(..., description="消息角色: 'user' 或 'assistant'")
     content: str = Field(..., description="消息内容")
+    type: str = Field(..., description="消息类型: 'human', 'ai', 'tool', etc.")
+    name: Optional[str] = Field(None, description="消息发送者名称")
+    tool_calls: Optional[List[Dict[str, Any]]] = Field(None, description="工具调用详情")
+    tool_call_id: Optional[str] = Field(None, description="工具消息对应的调用ID")
+    id: Optional[str] = Field(None, description="消息ID")
+    response_metadata: Optional[Dict[str, Any]] = Field(None, description="响应元数据")
 
 
 class ThreadItem(BaseModel):

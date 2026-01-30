@@ -18,12 +18,6 @@ from services.user import UserService, get_user_service
 class ThreadService:
     """会话服务类"""
 
-    # 消息类型映射：LangChain 类型 -> 前端 role
-    MESSAGE_TYPE_MAP = {
-        "human": "user",
-        "ai": "assistant",
-    }
-
     def __init__(self, user_service: UserService = None):
         self.settings = get_settings()
         self.user_service = user_service or get_user_service()
@@ -64,10 +58,6 @@ class ThreadService:
 
         messages = ct.checkpoint.get("channel_values", {}).get("messages", [])
         return len(messages)
-
-    def _convert_message_role(self, msg_type: str) -> str:
-        """转换消息类型为前端 role"""
-        return self.MESSAGE_TYPE_MAP.get(msg_type, msg_type)
 
     def _row_to_thread_item(self, row: Dict[str, Any], preview: Optional[str] = None, is_empty: bool = True) -> ThreadItem:
         """将数据库行转换为 ThreadItem"""
@@ -243,23 +233,22 @@ class ThreadService:
                     msg_type = getattr(msg, "type", "")
                     content = getattr(msg, "content", "")
                     
-                    # 过滤掉不需要展示的消息类型
-                    # 1. 只保留 human（用户）和 ai（助手）类型的消息
-                    if msg_type not in ("human", "ai"):
-                        continue
+                    # 获取更多消息属性
+                    name = getattr(msg, "name", None)
+                    tool_calls = getattr(msg, "tool_calls", None)
+                    tool_call_id = getattr(msg, "tool_call_id", None)
+                    msg_id = getattr(msg, "id", None)
+                    response_metadata = getattr(msg, "response_metadata", None)
                     
-                    # 2. 对于 AI 消息，过滤掉工具调用相关的消息
-                    if msg_type == "ai":
-                        # 检查是否有 tool_calls 属性（表示这是一个工具调用请求）
-                        tool_calls = getattr(msg, "tool_calls", None)
-                        if tool_calls:
-                            continue
-                        # 过滤掉没有实际内容的消息
-                        if not content or not content.strip():
-                            continue
-                    
-                    role = self._convert_message_role(msg_type)
-                    messages.append(MessageItem(role=role, content=content))
+                    messages.append(MessageItem(
+                        content=content,
+                        type=msg_type,
+                        name=name,
+                        tool_calls=tool_calls,
+                        tool_call_id=tool_call_id,
+                        id=msg_id,
+                        response_metadata=response_metadata
+                    ))
 
             return messages
         finally:

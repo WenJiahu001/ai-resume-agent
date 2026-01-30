@@ -118,10 +118,10 @@
                     class="flex-1 overflow-y-auto px-6 py-6 space-y-6 bg-slate-50 custom-scrollbar scroll-smooth">
                     <template v-if="messages.length">
                         <div v-for="(m, index) in messages" :key="`msg-${index}-${m.content?.slice(0, 10)}`"
-                            class="flex gap-4 group" :class="m.role === 'user' ? 'justify-end' : 'justify-start'">
+                            class="flex gap-4 group" :class="m.type === 'human' ? 'justify-end' : 'justify-start'">
 
                             <!-- AI 消息：头像在左 -->
-                            <template v-if="m.role === 'assistant'">
+                            <template v-if="m.type === 'ai'">
                                 <div class="flex gap-4 max-w-[85%]">
                                     <div
                                         class="flex h-9 w-9 items-center justify-center rounded-full bg-white border border-slate-100 shadow-sm text-lg flex-shrink-0 mt-0.5">
@@ -131,6 +131,21 @@
                                         <div class="text-[11px] font-medium text-slate-400 mb-1 ml-1">AI Assistant</div>
                                         <div
                                             class="rounded-2xl rounded-tl-sm bg-white border border-slate-200/60 shadow-sm px-4 py-3 text-sm text-slate-700 leading-relaxed whitespace-pre-wrap break-words">
+
+                                            <!-- Tool Calls Display -->
+                                            <div v-if="m.toolCalls && m.toolCalls.length" class="mb-3 space-y-2">
+                                                <div v-for="tc in m.toolCalls" :key="tc.id || tc.name"
+                                                    class="text-xs bg-slate-50 text-slate-600 px-3 py-2 rounded border border-slate-200/60">
+                                                    <div class="font-semibold flex items-center gap-1">
+                                                        <span>⚡</span> 正在调用: {{ tc.name }}
+                                                    </div>
+                                                    <div class="font-mono mt-1 opacity-80 truncate"
+                                                        :title="JSON.stringify(tc.args)">
+                                                        {{ JSON.stringify(tc.args) }}
+                                                    </div>
+                                                </div>
+                                            </div>
+
                                             <!-- 显示消息内容 -->
                                             <template v-if="m.displayedContent || m.content">
                                                 {{ m.displayedContent || m.content }}
@@ -155,8 +170,30 @@
                                 </div>
                             </template>
 
+                            <!-- 工具执行结果 -->
+                            <template v-else-if="m.type === 'tool'">
+                                <div class="flex justify-center my-4 w-full px-10">
+                                    <div
+                                        class="text-xs text-slate-500 bg-slate-100/80 px-4 py-2.5 rounded-lg border border-slate-200 font-mono w-full max-w-2xl hover:bg-slate-100 transition-colors">
+                                        <div class="flex items-center justify-between cursor-pointer select-none"
+                                            @click="m.expanded = !m.expanded">
+                                            <span class="flex items-center gap-2">
+                                                <span>🔧</span>
+                                                <span class="font-semibold">工具执行结果: {{ m.name }}</span>
+                                            </span>
+                                            <span class="text-slate-400 transform transition-transform duration-200"
+                                                :class="m.expanded ? 'rotate-180' : ''">▼</span>
+                                        </div>
+                                        <div v-if="m.expanded"
+                                            class="mt-2 pt-2 border-t border-slate-200/60 whitespace-pre-wrap break-words overflow-x-auto text-slate-600">
+                                            {{ m.content }}
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+
                             <!-- 用户消息：头像在右 -->
-                            <template v-else>
+                            <template v-else-if="m.type === 'human'">
                                 <div class="flex gap-4 max-w-[85%] flex-row-reverse">
                                     <div
                                         class="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-600 text-white text-sm font-semibold flex-shrink-0 mt-0.5 shadow-md shadow-indigo-500/20">
@@ -308,7 +345,7 @@
                 );
                 const isThinking = computed(() => {
                     if (!activeChat.value) return false;
-                    return activeChat.value.messages.some(m => m.role === "assistant" && m.isThinking);
+                    return activeChat.value.messages.some(m => m.type === "ai" && m.isThinking);
                 });
 
                 // 检查是否存在空会话（没有消息的会话）
@@ -648,7 +685,7 @@
 
                     // 添加用户消息
                     activeChat.value.messages.push({
-                        role: "user",
+                        type: "human",
                         content: userMessage
                     });
                     // 发送消息后，该会话不再是空会话
@@ -658,7 +695,7 @@
 
                     // 创建 AI 消息占位符（使用 reactive 确保响应式更新）
                     const assistantMsg = reactive({
-                        role: "assistant",
+                        type: "ai",
                         content: "",
                         displayedContent: "",
                         isThinking: true
@@ -817,11 +854,16 @@
                         const data = res.data;
                         const chat = chats.value.find(c => c.threadId === threadId);
                         if (chat && data.messages) {
-                            // 转换消息格式并添加 displayedContent
+                            // 转换消息格式并添加 displayedContent，保留所有后端字段
                             chat.messages = data.messages.map(m => ({
-                                role: m.role,
+                                type: m.type,           // 消息类型: human, ai, tool, etc.
                                 content: m.content,
-                                displayedContent: m.content
+                                displayedContent: m.content,
+                                name: m.name,           // 消息发送者名称
+                                toolCalls: m.tool_calls, // 工具调用列表 (for ai messages)
+                                toolCallId: m.tool_call_id, // 对应的工具调用ID
+                                id: m.id,               // 消息ID
+                                expanded: false         // 折叠状态 (for tool messages)
                             }));
 
                             // 更新预览
