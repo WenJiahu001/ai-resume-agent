@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 class ChatRequest(BaseModel):
     """聊天请求"""
-    user_id: str = Field(..., description="用户 ID")
+    user_id: Optional[str] = Field(None, description="用户 ID (由后端自动填充)")
     thread_id: str = Field(..., description="会话 ID")
     message: str = Field(..., description="用户消息内容")
 
@@ -25,13 +25,27 @@ class ChatRequest(BaseModel):
 
 class CreateThreadRequest(BaseModel):
     """创建会话请求"""
-    user_id: str = Field(..., description="用户 ID")
+    user_id: Optional[str] = Field(None, description="用户 ID (由后端自动填充)")
     title: Optional[str] = Field(None, description="会话标题（可选）")
 
 
 class UpdateThreadRequest(BaseModel):
     """更新会话请求"""
     title: Optional[str] = Field(None, description="会话标题")
+
+
+class LoginRequest(BaseModel):
+    """登录请求"""
+    username: str = Field(..., description="用户名")
+    password: str = Field(..., description="密码")
+
+
+class Token(BaseModel):
+    """Token 响应"""
+    access_token: str
+    token_type: str = "bearer"
+    user_id: str
+    username: str
 
 
 # ==================== 响应模型 ====================

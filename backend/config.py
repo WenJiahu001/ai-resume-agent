@@ -91,6 +91,15 @@ class ModelConfig:
 
 
 @dataclass(frozen=True)
+class AuthConfig:
+    """认证配置"""
+    jwt_secret: str = field(default_factory=lambda: os.getenv("JWT_SECRET", "your-secret-key-should-be-changed"))
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = field(default_factory=lambda: int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440")))  # 24 hours
+
+
+
+@dataclass(frozen=True)
 class VectorConfig:
     """向量存储配置"""
     qdrant_url: str = field(default_factory=lambda: os.getenv("QDRANT_URL", "http://localhost:6333"))
@@ -113,6 +122,7 @@ class Settings:
     model: ModelConfig = field(default_factory=ModelConfig)
     vector: VectorConfig = field(default_factory=VectorConfig)
     app: AppConfig = field(default_factory=AppConfig)
+    auth: AuthConfig = field(default_factory=AuthConfig)
 
 
 @lru_cache

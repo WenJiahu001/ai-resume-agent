@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from config import get_settings
-from routes import chat_router, thread_router, vector_router
+from routes import chat_router, thread_router, vector_router, auth_router
 from exceptions import AppException, NotFoundError, ValidationError
 from response import success
 from logger import get_logger
@@ -40,6 +40,7 @@ def create_app() -> FastAPI:
     )
 
     # 注册路由
+    app.include_router(auth_router)
     app.include_router(chat_router)
     app.include_router(thread_router)
     app.include_router(vector_router)

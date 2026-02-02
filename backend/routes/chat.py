@@ -5,6 +5,7 @@
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
+from deps import get_current_user_id
 from models import ChatRequest
 from services.agent import get_agent, stream_chat
 
@@ -46,8 +47,15 @@ router = APIRouter(prefix="/api/chat", tags=["聊天"])
         500: {"description": "服务器内部错误"}
     }
 )
-def chat_stream(req: ChatRequest, agent=Depends(get_agent)):
+def chat_stream(
+    req: ChatRequest, 
+    current_user_id: str = Depends(get_current_user_id),
+    agent=Depends(get_agent)
+):
     """流式聊天接口 - 发送消息并获取 AI 的流式响应"""
+    # 强制覆盖请求中的 user_id，确保安全性
+    req.user_id = current_user_id
+    
     return StreamingResponse(
         stream_chat(agent, req),
         media_type="text/event-stream"

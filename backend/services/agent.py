@@ -9,7 +9,6 @@ from datetime import datetime
 from typing import Iterator
 
 from langchain.chat_models import init_chat_model
-from langchain_core.documents import Document
 from langchain_core.messages import SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.checkpoint.mysql.pymysql import PyMySQLSaver
@@ -114,7 +113,6 @@ class AgentService:
 
 # ==================== 工具函数 ====================
 
-# todo 报错应当要处理
 @tool
 def search(query: str, category: str = None) -> str:
     """
