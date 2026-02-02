@@ -129,22 +129,26 @@
                                     </div>
                                     <div class="flex-1 min-w-0">
                                         <div class="text-[11px] font-medium text-slate-400 mb-1 ml-1">AI Assistant</div>
-                                        <div
-                                            class="rounded-2xl rounded-tl-sm bg-white border border-slate-200/60 shadow-sm px-4 py-3 text-sm text-slate-700 leading-relaxed whitespace-pre-wrap break-words">
+                                        <div :class="[
+                                                'rounded-2xl rounded-tl-sm bg-white border border-slate-200/60 shadow-sm text-sm text-slate-700 leading-relaxed',
+                                                ((m.displayedContent && m.displayedContent.trim()) || (m.content && m.content.trim()) || m.isThinking) ? 'px-4 py-3 whitespace-pre-wrap break-words' : 'px-3 py-2'
+                                            ]">
 
                                             <!-- Tool Calls Display -->
-                                            <div v-if="m.toolCalls && m.toolCalls.length" class="mb-3 space-y-2">
+                                            <div v-if="m.toolCalls && m.toolCalls.length"
+                                                :class="((m.displayedContent && m.displayedContent.trim()) || (m.content && m.content.trim())) ? 'mb-2' : ''"
+                                                class="flex flex-wrap gap-1.5">
                                                 <div v-for="tc in m.toolCalls" :key="tc.id || tc.name"
-                                                    class="text-xs bg-slate-50 text-slate-600 px-3 py-2 rounded border border-slate-200/60">
-                                                    <div class="font-semibold flex items-center gap-1">
-                                                        <span>⚡</span> 正在调用: {{ tc.name }}
-                                                    </div>
-                                                    <div class="font-mono mt-1 opacity-80 truncate"
-                                                        :title="JSON.stringify(tc.args)">
-                                                        {{ JSON.stringify(tc.args) }}
-                                                    </div>
+                                                    class="text-xs bg-slate-50/80 text-slate-600 px-2 py-1 rounded-md border border-slate-100 inline-flex items-center gap-1.5">
+                                                    <span class="text-indigo-500">⚡</span>
+                                                    <span class="font-medium text-slate-700">{{ tc.name }}</span>
+                                                    <span v-if="tc.args && Object.keys(tc.args).length"
+                                                        class="font-mono text-[10px] text-slate-400 truncate max-w-[150px]"
+                                                        :title="JSON.stringify(tc.args)">{{ JSON.stringify(tc.args)
+                                                        }}</span>
                                                 </div>
                                             </div>
+
 
                                             <!-- 显示消息内容 -->
                                             <template v-if="m.displayedContent || m.content">
@@ -626,10 +630,68 @@
                         const jsonStr = trimmed.replace("data: ", "");
                         const data = JSON.parse(jsonStr);
 
-                        // data.type === "token"
-                        if (data.content) {
-                            // 去掉开头的换行符
-                            const content = data.content.replace(/^\n/, '');
+                        // 处理工具调用信息 - 作为独立的 AI 消息展示
+                        if (data.tool_calls && data.tool_calls.length > 0) {
+                            const chat = activeChat.value;
+                            if (chat) {
+                                // 为每个工具调用创建独立的 AI 消息
+                                data.tool_calls.forEach(tc => {
+                                    // 检查是否已存在该工具调用的消息
+                                    const exists = chat.messages.some(
+                                        m => m.type === "ai" && m.toolCalls &&
+                                            m.toolCalls.some(existingTc => existingTc.id === tc.id)
+                                    );
+                                    if (!exists) {
+                                        const toolCallMsg = reactive({
+                                            type: "ai",
+                                            content: "",
+                                            displayedContent: "",
+                                            isThinking: false,
+                                            toolCalls: [tc]
+                                        });
+                                        // 在最终 AI 消息之前插入
+                                        const msgIndex = chat.messages.indexOf(assistantMsg);
+                                        if (msgIndex > 0) {
+                                            chat.messages.splice(msgIndex, 0, toolCallMsg);
+                                        } else {
+                                            chat.messages.push(toolCallMsg);
+                                        }
+                                    }
+                                });
+                                scrollToBottom("smooth");
+                            }
+                        }
+
+                        // 处理工具执行结果 - 插入为独立的 tool 消息
+                        if (data.type === "tool_result") {
+                            const toolMsg = reactive({
+                                type: "tool",
+                                name: data.name || "unknown",
+                                content: data.content || "",
+                                toolCallId: data.tool_call_id || "",
+                                expanded: false
+                            });
+                            // 在当前 AI 消息之前插入工具结果
+                            const chat = activeChat.value;
+                            if (chat) {
+                                const msgIndex = chat.messages.indexOf(assistantMsg);
+                                if (msgIndex > 0) {
+                                    chat.messages.splice(msgIndex, 0, toolMsg);
+                                } else {
+                                    chat.messages.push(toolMsg);
+                                }
+                            }
+                            scrollToBottom("smooth");
+                            return;
+                        }
+
+                        // data.type === "token" - 处理 AI 文本内容
+                        if (data.content !== undefined && data.type !== "tool_result") {
+                            // 如果是第一个 token，去掉开头的所有换行符
+                            let content = data.content;
+                            if (!assistantMsg.content) {
+                                content = content.replace(/^\n+/, '');
+                            }
                             assistantMsg.content += content;
                             // 启动或继续打字机效果
                             if (!typewriterTimers.has(assistantMsg)) {
@@ -855,16 +917,20 @@
                         const chat = chats.value.find(c => c.threadId === threadId);
                         if (chat && data.messages) {
                             // 转换消息格式并添加 displayedContent，保留所有后端字段
-                            chat.messages = data.messages.map(m => ({
-                                type: m.type,           // 消息类型: human, ai, tool, etc.
-                                content: m.content,
-                                displayedContent: m.content,
-                                name: m.name,           // 消息发送者名称
-                                toolCalls: m.tool_calls, // 工具调用列表 (for ai messages)
-                                toolCallId: m.tool_call_id, // 对应的工具调用ID
-                                id: m.id,               // 消息ID
-                                expanded: false         // 折叠状态 (for tool messages)
-                            }));
+                            chat.messages = data.messages.map(m => {
+                                // 去掉开头的换行符
+                                const cleanContent = (m.content || '').replace(/^\n+/, '');
+                                return {
+                                    type: m.type,           // 消息类型: human, ai, tool, etc.
+                                    content: cleanContent,
+                                    displayedContent: cleanContent,
+                                    name: m.name,           // 消息发送者名称
+                                    toolCalls: m.tool_calls, // 工具调用列表 (for ai messages)
+                                    toolCallId: m.tool_call_id, // 对应的工具调用ID
+                                    id: m.id,               // 消息ID
+                                    expanded: false         // 折叠状态 (for tool messages)
+                                };
+                            });
 
                             // 更新预览
                             if (chat.messages.length > 0) {

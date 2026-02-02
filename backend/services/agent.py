@@ -116,17 +116,33 @@ class AgentService:
 
 # todo 报错应当要处理
 @tool
-def search(query: str, category: str = None) -> list[Document]:
+def search(query: str, category: str = None) -> str:
     """
     通过关键词检索知识库。
     
     Args:
         query: 搜索关键词
         category: 分类过滤（可选），使用目录名作为分类
+    
+    Returns:
+        搜索结果的文本描述，或错误提示信息
     """
     logger.info(f"正在搜索: {query}, category: {category}")
-    vector_service = get_vector_service()
-    return vector_service.search(query, category)
+    try:
+        vector_service = get_vector_service()
+        results = vector_service.search(query, category)
+        if not results:
+            return f"未找到与 '{query}' 相关的内容。"
+        
+        # 将 Document 列表转换为文本
+        output = []
+        for i, doc in enumerate(results, 1):
+            content = doc.page_content if hasattr(doc, 'page_content') else str(doc)
+            output.append(f"[{i}] {content}")
+        return "\n\n".join(output)
+    except Exception as e:
+        logger.error(f"搜索时发生错误: {e}")
+        return f"搜索失败，请稍后重试。错误信息：{str(e)}"
 
 @tool
 def getNowDateTime()->str:
@@ -163,15 +179,37 @@ def stream_chat(agent, req: ChatRequest) -> Iterator[str]:
             {"messages": [{"role": "user", "content": req.message}]},
             config=config,
         ):
+            # 处理 agent 返回的消息（AI 响应）
             agent_chunk = chunk.get("agent")
             if agent_chunk and "messages" in agent_chunk:
                 msg = agent_chunk["messages"][-1]
-                yield sse_format(
-                    json.dumps(
-                        {"type": "token", "content": msg.content},
-                        ensure_ascii=False,
-                    )
-                )
+                response_data = {"type": "token", "content": msg.content}
+                
+                # 如果有工具调用，添加到响应中
+                if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                    response_data["tool_calls"] = [
+                        {
+                            "id": tc.get("id", ""),
+                            "name": tc.get("name", ""),
+                            "args": tc.get("args", {})
+                        }
+                        for tc in msg.tool_calls
+                    ]
+                
+                yield sse_format(json.dumps(response_data, ensure_ascii=False))
+            
+            # 处理 tools 返回的消息（工具执行结果）
+            tools_chunk = chunk.get("tools")
+            if tools_chunk and "messages" in tools_chunk:
+                for tool_msg in tools_chunk["messages"]:
+                    tool_result = {
+                        "type": "tool_result",
+                        "name": getattr(tool_msg, 'name', ''),
+                        "tool_call_id": getattr(tool_msg, 'tool_call_id', ''),
+                        "content": tool_msg.content if hasattr(tool_msg, 'content') else str(tool_msg)
+                    }
+                    yield sse_format(json.dumps(tool_result, ensure_ascii=False))
+        
         yield sse_format(json.dumps({"type": "end"}))
     except Exception as exc:
         yield sse_format(json.dumps({"type": "error", "content": str(exc)}))
