@@ -14,7 +14,7 @@
 <body class="min-h-screen bg-slate-50 text-slate-800 antialiased font-sans">
     <div id="app" class="h-screen flex justify-center overflow-hidden bg-slate-50">
         <div v-if="isLoggedIn"
-            class="flex w-full max-w-6xl bg-white shadow-2xl overflow-hidden h-full sm:h-[95vh] sm:my-auto sm:rounded-2xl border border-slate-200/60 ring-1 ring-slate-900/5">
+            class="flex w-full max-w-6xl bg-white shadow-2xl overflow-hidden h-full sm:h-[95vh] sm:my-auto sm:rounded-none border border-slate-200/60 ring-1 ring-slate-900/5">
             <!-- 左侧聊天列表 / 联系人 -->
             <aside
                 class="w-64 border-r border-slate-200/60 bg-slate-50/80 backdrop-blur-xl flex flex-col z-10 shrink-0">
@@ -23,7 +23,7 @@
                         <div class="text-xs font-bold text-slate-400 uppercase tracking-wider">Messages</div>
                     </div>
                     <button @click="createNewChat" :disabled="hasEmptyChat"
-                        class="w-full group inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/20 transition-all duration-200 ease-in-out"
+                        class="w-full group inline-flex items-center justify-center gap-2 rounded-none px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/20 transition-all duration-200 ease-in-out"
                         :class="hasEmptyChat ? 'bg-slate-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 hover:shadow-indigo-500/30 hover:-translate-y-0.5'"
                         :title="hasEmptyChat ? '当前存在空会话，无法创建新会话' : '创建新会话'">
                         <svg class="w-4 h-4 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -37,7 +37,7 @@
                 <div ref="chatListRef" @scroll="handleScroll"
                     class="flex-1 overflow-y-auto py-3 px-3 space-y-1 custom-scrollbar">
                     <div v-for="chat in chats" :key="chat.id" @click="setActiveChat(chat.id)"
-                        class="relative w-full px-3 py-3 text-left flex flex-col gap-1 rounded-xl cursor-pointer border transition-all duration-200 group"
+                        class="relative w-full px-3 py-3 text-left flex flex-col gap-1 rounded-none cursor-pointer border transition-all duration-200 group"
                         :class="chat.id === activeChatId
                                 ? 'bg-white border-slate-200/60 shadow-sm ring-1 ring-slate-900/5'
                                 : 'bg-transparent border-transparent hover:bg-slate-200/50 hover:border-slate-200/30'">
@@ -63,7 +63,7 @@
 
                             <!-- 删除按钮 (hover show) -->
                             <button @click.stop="deleteChat(chat.id)"
-                                class="opacity-0 group-hover:opacity-100 p-1 rounded-md text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all transform scale-90 hover:scale-100"
+                                class="opacity-0 group-hover:opacity-100 p-1 rounded-none text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all transform scale-90 hover:scale-100"
                                 title="删除会话">
                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -99,7 +99,7 @@
                         <h1 class="text-base font-bold text-slate-800 flex items-center gap-2">
                             {{ activeChat?.name || '我的 AI 助手' }}
                             <span v-if="activeChat?.threadId"
-                                class="px-1.5 py-0.5 rounded-md bg-slate-100 text-[10px] font-normal text-slate-500 font-mono tracking-tight">{{
+                                class="px-1.5 py-0.5 rounded-none bg-slate-100 text-[10px] font-normal text-slate-500 font-mono tracking-tight">{{
                                 activeChat.threadId.slice(0, 8) }}</span>
                         </h1>
                         <p class="mt-0.5 text-[11px] text-slate-400 font-medium">
@@ -108,7 +108,7 @@
                         </p>
                     </div>
                     <button @click="logout"
-                        class="inline-flex items-center rounded-lg border border-slate-200/60 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm hover:bg-slate-50 hover:text-red-600 transition-all">
+                        class="inline-flex items-center rounded-none border border-slate-200/60 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm hover:bg-slate-50 hover:text-red-600 transition-all">
                         退出登录
                     </button>
                 </header>
@@ -124,13 +124,13 @@
                             <template v-if="m.type === 'ai'">
                                 <div class="flex gap-4 max-w-[85%]">
                                     <div
-                                        class="flex h-9 w-9 items-center justify-center rounded-full bg-white border border-slate-100 shadow-sm text-lg flex-shrink-0 mt-0.5">
-                                        🤖
+                                        class="flex h-9 w-9 items-center justify-center rounded-none bg-white border border-slate-100 shadow-sm text-sm font-bold text-slate-700 flex-shrink-0 mt-0.5">
+                                        AI
                                     </div>
                                     <div class="flex-1 min-w-0">
                                         <div class="text-[11px] font-medium text-slate-400 mb-1 ml-1">AI Assistant</div>
                                         <div :class="[
-                                                'rounded-2xl rounded-tl-sm bg-white border border-slate-200/60 shadow-sm text-sm text-slate-700 leading-relaxed',
+                                                'rounded-none bg-white border border-slate-200/60 shadow-sm text-sm text-slate-700 leading-relaxed',
                                                 ((m.displayedContent && m.displayedContent.trim()) || (m.content && m.content.trim()) || m.isThinking) ? 'px-4 py-3 whitespace-pre-wrap break-words' : 'px-3 py-2'
                                             ]">
 
@@ -139,7 +139,7 @@
                                                 :class="((m.displayedContent && m.displayedContent.trim()) || (m.content && m.content.trim())) ? 'mb-2' : ''"
                                                 class="flex flex-wrap gap-1.5">
                                                 <div v-for="tc in m.toolCalls" :key="tc.id || tc.name"
-                                                    class="text-xs bg-slate-50/80 text-slate-600 px-2 py-1 rounded-md border border-slate-100 inline-flex items-center gap-1.5">
+                                                    class="text-xs bg-slate-50/80 text-slate-600 px-2 py-1 rounded-none border border-slate-100 inline-flex items-center gap-1.5">
                                                     <span class="text-indigo-500">⚡</span>
                                                     <span class="font-medium text-slate-700">{{ tc.name }}</span>
                                                     <span v-if="tc.args && Object.keys(tc.args).length"
@@ -155,7 +155,7 @@
                                                 {{ m.displayedContent || m.content }}
                                                 <!-- 回复还在进行中时，显示一个跳动的小光标 -->
                                                 <span v-if="m.isThinking"
-                                                    class="inline-block w-1.5 h-3.5 ml-0.5 align-middle animate-pulse bg-indigo-400 rounded-sm">&nbsp;</span>
+                                                    class="inline-block w-1.5 h-3.5 ml-0.5 align-middle animate-pulse bg-indigo-400 rounded-none">&nbsp;</span>
                                             </template>
 
                                             <!-- 还没有内容，但处于思考中：显示三点加载动画 -->
@@ -178,7 +178,7 @@
                             <template v-else-if="m.type === 'tool'">
                                 <div class="flex justify-center my-4 w-full px-10">
                                     <div
-                                        class="text-xs text-slate-500 bg-slate-100/80 px-4 py-2.5 rounded-lg border border-slate-200 font-mono w-full max-w-2xl hover:bg-slate-100 transition-colors">
+                                        class="text-xs text-slate-500 bg-slate-100/80 px-4 py-2.5 rounded-none border border-slate-200 font-mono w-full max-w-2xl hover:bg-slate-100 transition-colors">
                                         <div class="flex items-center justify-between cursor-pointer select-none"
                                             @click="m.expanded = !m.expanded">
                                             <span class="flex items-center gap-2">
@@ -200,13 +200,13 @@
                             <template v-else-if="m.type === 'human'">
                                 <div class="flex gap-4 max-w-[85%] flex-row-reverse">
                                     <div
-                                        class="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-600 text-white text-sm font-semibold flex-shrink-0 mt-0.5 shadow-md shadow-indigo-500/20">
+                                        class="flex h-9 w-9 items-center justify-center rounded-none bg-indigo-600 text-white text-sm font-semibold flex-shrink-0 mt-0.5 shadow-md shadow-indigo-500/20">
                                         Me
                                     </div>
                                     <div class="flex-1 min-w-0 text-right">
                                         <div class="text-[11px] font-medium text-slate-400 mb-1 mr-1">You</div>
                                         <div
-                                            class="inline-block rounded-2xl rounded-tr-sm bg-gradient-to-br from-indigo-600 to-violet-600 px-4 py-3 text-sm leading-relaxed text-white shadow-md shadow-indigo-500/10 whitespace-pre-wrap break-words text-left">
+                                            class="inline-block rounded-none bg-gradient-to-br from-indigo-600 to-violet-600 px-4 py-3 text-sm leading-relaxed text-white shadow-md shadow-indigo-500/10 whitespace-pre-wrap break-words text-left">
                                             {{ m.content }}
                                         </div>
                                     </div>
@@ -218,7 +218,7 @@
                     <!-- 当前会话无消息时的占位提示 -->
                     <template v-else>
                         <div class="h-full flex flex-col items-center justify-center text-center space-y-6">
-                            <div class="grid place-items-center w-16 h-16 rounded-full bg-zinc-100 text-zinc-400 mb-2">
+                            <div class="grid place-items-center w-16 h-16 rounded-none bg-zinc-100 text-zinc-400 mb-2">
                                 <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
                                         d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z">
@@ -237,7 +237,7 @@
                             </div>
 
                             <button @click="sayHello"
-                                class="group relative flex items-center justify-center gap-2 px-6 py-2.5 bg-white border border-zinc-200 rounded-full shadow-sm hover:shadow-md hover:border-blue-200 hover:bg-blue-50/50 transition-all duration-300 cursor-pointer">
+                                class="group relative flex items-center justify-center gap-2 px-6 py-2.5 bg-white border border-zinc-200 rounded-none shadow-sm hover:shadow-md hover:border-blue-200 hover:bg-blue-50/50 transition-all duration-300 cursor-pointer">
                                 <span
                                     class="text-lg group-hover:rotate-12 transition-transform duration-300 origin-bottom-right">👋</span>
                                 <span
@@ -251,13 +251,13 @@
                 <section class="border-t border-slate-200/60 bg-white/80 backdrop-blur-xl px-6 pt-4 pb-6 z-10">
                     <div class="flex items-end gap-3 max-w-4xl mx-auto w-full">
                         <div
-                            class="flex-1 rounded-2xl border border-slate-200/80 bg-slate-50 px-4 py-3 shadow-sm focus-within:ring-2 focus-within:ring-indigo-500/20 focus-within:border-indigo-500 focus-within:bg-white transition-all duration-200">
+                            class="flex-1 rounded-none border border-slate-200/80 bg-slate-50 px-4 py-3 shadow-sm focus-within:ring-2 focus-within:ring-indigo-500/20 focus-within:border-indigo-500 focus-within:bg-white transition-all duration-200">
                             <textarea v-model="input" @keydown.enter.exact.prevent="handleEnter"
                                 @keydown.enter.shift.exact.stop rows="1" placeholder="输入消息..."
                                 class="block w-full resize-none border-0 bg-transparent p-0 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-0 max-h-32"></textarea>
                         </div>
                         <button :disabled="!input.trim() || isThinking" @click="send"
-                            class="group inline-flex items-center justify-center h-[46px] w-[46px] rounded-full bg-indigo-600 text-white shadow-lg shadow-indigo-500/30 transition-all hover:bg-indigo-700 hover:scale-105 active:scale-95 disabled:bg-slate-300 disabled:shadow-none disabled:cursor-not-allowed disabled:scale-100">
+                            class="group inline-flex items-center justify-center h-[46px] w-[46px] rounded-none bg-indigo-600 text-white shadow-lg shadow-indigo-500/30 transition-all hover:bg-indigo-700 hover:scale-105 active:scale-95 disabled:bg-slate-300 disabled:shadow-none disabled:cursor-not-allowed disabled:scale-100">
                             <span v-if="!isThinking">
                                 <svg class="w-5 h-5 translate-x-0.5" fill="none" stroke="currentColor"
                                     viewBox="0 0 24 24">
@@ -292,7 +292,7 @@
                         <label for="username" class="block text-sm font-medium leading-6 text-slate-900">用户名</label>
                         <div class="mt-2">
                             <input id="username" v-model="loginForm.username" name="username" type="text" required
-                                class="block w-full rounded-md border-0 py-1.5 text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600 sm:text-sm sm:leading-6 px-3">
+                                class="block w-full rounded-none border-0 py-1.5 text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600 sm:text-sm sm:leading-6 px-3">
                         </div>
                     </div>
 
@@ -302,7 +302,7 @@
                         </div>
                         <div class="mt-2">
                             <input id="password" v-model="loginForm.password" name="password" type="password" required
-                                class="block w-full rounded-md border-0 py-1.5 text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600 sm:text-sm sm:leading-6 px-3">
+                                class="block w-full rounded-none border-0 py-1.5 text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600 sm:text-sm sm:leading-6 px-3">
                         </div>
                     </div>
 
@@ -312,7 +312,7 @@
 
                     <div>
                         <button type="submit" :disabled="loginForm.isLoading"
-                            class="flex w-full justify-center rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-semibold leading-6 text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:opacity-50 transition-all">
+                            class="flex w-full justify-center rounded-none bg-indigo-600 px-3 py-1.5 text-sm font-semibold leading-6 text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:opacity-50 transition-all">
                             <span v-if="loginForm.isLoading">登录中...</span>
                             <span v-else>登录</span>
                         </button>
