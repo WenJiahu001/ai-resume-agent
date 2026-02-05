@@ -48,6 +48,20 @@ def create_app() -> FastAPI:
     # 注册全局异常处理器
     register_exception_handlers(app)
 
+    # 挂载前端静态文件 (必须在 API 路由之后)
+    import os
+    from fastapi.staticfiles import StaticFiles
+    
+    # 获取 frontend 目录绝对路径 (假设 backend 与 frontend 同级)
+    # backend/app.py -> backend -> parent -> frontend
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    frontend_dir = os.path.join(os.path.dirname(current_dir), "frontend")
+
+    if os.path.exists(frontend_dir):
+        app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="static")
+    else:
+        logger.warning(f"前端目录不存在，静态文件服务未启动: {frontend_dir}")
+
     return app
 
 
