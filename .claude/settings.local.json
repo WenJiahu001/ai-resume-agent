@@ -5,7 +5,12 @@
       "Bash(gh repo:*)",
       "Bash(curl:*)",
       "Bash(npm install:*)",
-      "Bash(uipro init:*)"
+      "Bash(uipro init:*)",
+      "Bash(uv run:*)",
+      "Bash(npm create:*)",
+      "Bash(npx tailwindcss:*)",
+      "Skill(update-config)",
+      "Bash(powershell:*)"
     ]
   }
 }

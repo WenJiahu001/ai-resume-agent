@@ -19,6 +19,7 @@ from logger import get_logger
 from models import ChatRequest
 from prompts import SYSTEM_PROMPT
 from services.vector import get_vector_service
+from services.token import get_token_usage_service
 
 logger = get_logger(__name__)
 
@@ -173,6 +174,10 @@ def stream_chat(agent, req: ChatRequest) -> Iterator[str]:
     config = {"configurable": {"thread_id": req.get_full_thread_id()}}
 
     try:
+        # 获取 token 服务
+        token_service = get_token_usage_service()
+        model_name = get_settings().model.model_name
+
         for chunk in agent.stream(
             {"messages": [{"role": "user", "content": req.message}]},
             config=config,
@@ -182,7 +187,20 @@ def stream_chat(agent, req: ChatRequest) -> Iterator[str]:
             if agent_chunk and "messages" in agent_chunk:
                 msg = agent_chunk["messages"][-1]
                 response_data = {"type": "token", "content": msg.content}
-                
+
+                # 拦截并记录 Token 消耗 (usage_metadata 是 LangChain 官方结构)
+                if hasattr(msg, 'usage_metadata') and msg.usage_metadata:
+                    usage = msg.usage_metadata
+                    token_service.save_usage(
+                        user_id=req.user_id,
+                        thread_id=req.thread_id,
+                        model_name=model_name,
+                        prompt_tokens=usage.get("input_tokens", 0),
+                        completion_tokens=usage.get("output_tokens", 0),
+                        total_tokens=usage.get("total_tokens", 0)
+                    )
+                    logger.info(f"已记录 Token 消耗: {usage}")
+
                 # 如果有工具调用，添加到响应中
                 if hasattr(msg, 'tool_calls') and msg.tool_calls:
                     response_data["tool_calls"] = [

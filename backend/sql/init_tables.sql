@@ -25,3 +25,19 @@ CREATE TABLE IF NOT EXISTS threads (
     INDEX idx_user_id (user_id) COMMENT '用户ID索引，加速按用户查询',
     INDEX idx_updated_at (updated_at) COMMENT '更新时间索引，加速排序查询'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='会话表';
+
+-- Token 消耗统计表：记录每次 AI 对话的消耗情况
+CREATE TABLE IF NOT EXISTS token_usage (
+    id INT AUTO_INCREMENT PRIMARY KEY COMMENT '自增主键',
+    user_id VARCHAR(36) NOT NULL COMMENT '用户ID',
+    thread_id VARCHAR(36) NOT NULL COMMENT '会话ID',
+    model_name VARCHAR(100) NOT NULL COMMENT '模型名称',
+    prompt_tokens INT DEFAULT 0 COMMENT '输入 Token 数',
+    completion_tokens INT DEFAULT 0 COMMENT '输出 Token 数',
+    total_tokens INT DEFAULT 0 COMMENT '总 Token 数',
+    cost DECIMAL(10, 6) DEFAULT 0.000000 COMMENT '估算成本（待扩展）',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '记录时间',
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    INDEX idx_user_thread (user_id, thread_id) COMMENT '用户会话复合索引',
+    INDEX idx_created_at (created_at) COMMENT '时间索引'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Token消耗统计表';
