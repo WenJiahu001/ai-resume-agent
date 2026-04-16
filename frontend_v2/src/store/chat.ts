@@ -8,7 +8,9 @@ export interface Message {
   isThinking?: boolean;
   toolCalls?: any[];
   name?: string;
+  id?: string;
   expanded?: boolean;
+  status?: 'running' | 'done';
 }
 
 export interface ChatThread {
@@ -75,14 +77,17 @@ export const useChatStore = defineStore('chat', {
       if (res.code === 'SUCCESS') {
         const chat = this.chats.find(c => c.id === threadId);
         if (chat) {
-          chat.messages = res.data.messages.map((m: any) => ({
-            type: m.type,
-            content: m.content || '',
-            displayedContent: m.content || '',
-            name: m.name,
-            toolCalls: m.tool_calls,
-            expanded: false,
-          }));
+          chat.messages = res.data.messages
+            .map((m: any) => ({
+              type: m.type,
+              content: m.content || '',
+              displayedContent: m.content || '',
+              name: m.name,
+              toolCalls: m.tool_calls,
+              expanded: false,
+              status: m.type === 'tool' ? 'done' : undefined
+            }))
+            .filter((m: any) => !(m.type === 'ai' && !m.content));
         }
       }
     },
@@ -147,14 +152,42 @@ export const useChatStore = defineStore('chat', {
       chat.isEmptyFromServer = false;
 
       // 2. 创建 AI 占位消息
-      const aiMsg: Message = {
+      chat.messages.push({
         type: 'ai',
         content: '',
         displayedContent: '',
         isThinking: true,
         toolCalls: []
+      });
+      let aiMsg = chat.messages[chat.messages.length - 1];
+
+      let isStreamFinished = false;
+      let typeWriterTimer: number | null = null;
+
+      const stopTypeWriter = () => {
+        if (typeWriterTimer) {
+          window.clearInterval(typeWriterTimer);
+          typeWriterTimer = null;
+        }
       };
-      chat.messages.push(aiMsg);
+
+      const startTypeWriter = () => {
+        if (!typeWriterTimer) {
+          typeWriterTimer = window.setInterval(() => {
+            if (aiMsg && aiMsg.displayedContent !== undefined) {
+              if (aiMsg.displayedContent.length < aiMsg.content.length) {
+                const gap = aiMsg.content.length - aiMsg.displayedContent.length;
+                const charsToAdd = Math.max(1, Math.floor(gap / 5));
+                aiMsg.displayedContent += aiMsg.content.substring(aiMsg.displayedContent.length, aiMsg.displayedContent.length + charsToAdd);
+              } else if (isStreamFinished) {
+                stopTypeWriter();
+              }
+            } else if (isStreamFinished) {
+              stopTypeWriter();
+            }
+          }, 30);
+        }
+      };
 
       try {
         const token = localStorage.getItem('authToken');
@@ -173,36 +206,120 @@ export const useChatStore = defineStore('chat', {
         if (!response.body) return;
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
+        let buffer = '';
+
+        const ensureAiMsg = () => {
+          if (chat.messages[chat.messages.length - 1].type !== 'ai') {
+            chat.messages.push({
+              type: 'ai',
+              content: '',
+              displayedContent: '',
+              isThinking: false,
+              toolCalls: []
+            });
+            aiMsg = chat.messages[chat.messages.length - 1];
+          }
+        };
 
         while (true) {
           const { done, value } = await reader.read();
-          if (done) break;
+          if (done) {
+            // 处理遗留在 buffer 中的最后一行（如果有的话）
+            if (buffer) {
+              const lines = buffer.split('\n');
+              for (const line of lines) {
+                if (!line.trim() || !line.startsWith('data: ')) continue;
+                try {
+                  const data = JSON.parse(line.replace('data: ', ''));
+                  if (data.type === 'token' && data.content) {
+                    ensureAiMsg();
+                    aiMsg.isThinking = false;
+                    aiMsg.content += data.content;
+                    startTypeWriter();
+                  }
+                } catch (e) {
+                  // ignore
+                }
+              }
+            }
+            break;
+          }
 
-          const chunk = decoder.decode(value);
-          const lines = chunk.split('\n');
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
 
           for (const line of lines) {
             if (!line.trim() || !line.startsWith('data: ')) continue;
 
             try {
               const data = JSON.parse(line.replace('data: ', ''));
+              console.log('【DEBUG SSE event】', data);
 
               if (data.type === 'token' && data.content) {
+                ensureAiMsg();
                 aiMsg.isThinking = false;
                 aiMsg.content += data.content;
-                aiMsg.displayedContent = aiMsg.content;
+                startTypeWriter();
               } else if (data.type === 'tool_call') {
-                if (!aiMsg.toolCalls) aiMsg.toolCalls = [];
-                aiMsg.toolCalls.push({ name: data.name, id: data.id });
-              } else if (data.type === 'tool_result') {
-                // 暂时简单处理：将工具结果作为单独的消息加入，或更新状态
+                if (chat.messages[chat.messages.length - 1] === aiMsg && !aiMsg.content) {
+                  chat.messages.pop();
+                } else {
+                  aiMsg.isThinking = false;
+                  if (aiMsg.displayedContent !== undefined) {
+                    aiMsg.displayedContent = aiMsg.content;
+                  }
+                }
+                
                 chat.messages.push({
                   type: 'tool',
+                  id: data.id,
                   name: data.name,
-                  content: typeof data.content === 'string' ? data.content : JSON.stringify(data.content),
-                  expanded: false
+                  content: '执行中...',
+                  expanded: false,
+                  status: 'running'
                 });
+                chat.messages.push({
+                  type: 'ai',
+                  content: '',
+                  displayedContent: '',
+                  isThinking: true,
+                  toolCalls: []
+                });
+                aiMsg = chat.messages[chat.messages.length - 1];
+              } else if (data.type === 'tool_result') {
+                const toolMsg = chat.messages.find(m => m.type === 'tool' && m.name === data.name && m.status === 'running');
+                if (toolMsg) {
+                  toolMsg.status = 'done';
+                  toolMsg.content = typeof data.content === 'string' ? data.content : JSON.stringify(data.content);
+                } else {
+                  // Fallback: if we didn't see the tool_call for some reason
+                  if (chat.messages[chat.messages.length - 1] === aiMsg && !aiMsg.content) {
+                    chat.messages.pop();
+                  } else {
+                    aiMsg.isThinking = false;
+                    if (aiMsg.displayedContent !== undefined) {
+                      aiMsg.displayedContent = aiMsg.content;
+                    }
+                  }
+                  chat.messages.push({
+                    type: 'tool',
+                    name: data.name,
+                    content: typeof data.content === 'string' ? data.content : JSON.stringify(data.content),
+                    expanded: false,
+                    status: 'done'
+                  });
+                  chat.messages.push({
+                    type: 'ai',
+                    content: '',
+                    displayedContent: '',
+                    isThinking: true,
+                    toolCalls: []
+                  });
+                  aiMsg = chat.messages[chat.messages.length - 1];
+                }
               } else if (data.type === 'error') {
+                ensureAiMsg();
                 aiMsg.content = '抱歉，发生了错误: ' + data.content;
                 aiMsg.isThinking = false;
               }
@@ -214,9 +331,15 @@ export const useChatStore = defineStore('chat', {
       } catch (error) {
         console.error('Failed to send message:', error);
         aiMsg.content = '发送失败，请稍后重试';
+        aiMsg.displayedContent = aiMsg.content;
         aiMsg.isThinking = false;
       } finally {
         aiMsg.isThinking = false;
+        isStreamFinished = true;
+        const lastMsg = chat.messages[chat.messages.length - 1];
+        if (lastMsg && lastMsg.type === 'ai' && !lastMsg.content && (!lastMsg.toolCalls || lastMsg.toolCalls.length === 0)) {
+          chat.messages.pop();
+        }
       }
     }
   },

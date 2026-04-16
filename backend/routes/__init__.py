@@ -1,10 +1,8 @@
-# -*- coding: utf-8 -*-
-"""Routes 模块"""
+"""路由注册"""
 
 from .chat import router as chat_router
 from .thread import router as thread_router
 from .vector import router as vector_router
 from .auth import router as auth_router
-from .stats import router as stats_router
 
-__all__ = ["chat_router", "thread_router", "vector_router", "auth_router", "stats_router"]
+__all__ = ["chat_router", "thread_router", "vector_router", "auth_router"]

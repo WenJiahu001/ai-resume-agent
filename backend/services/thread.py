@@ -1,313 +1,181 @@
-# -*- coding: utf-8 -*-
-"""
-会话服务
+"""会话服务"""
 
-处理会话列表和历史消息的业务逻辑。
-"""
 import uuid
 from typing import List, Optional, Dict, Any
+from dataclasses import dataclass
 
 from langgraph.checkpoint.mysql.pymysql import PyMySQLSaver
 
-from config import get_settings
+from services.base import BaseService
 from exceptions import ValidationError
 from models import MessageItem, ThreadItem
-from services.user import UserService, get_user_service
+from services.user import UserService
 
 
-class ThreadService:
-    """会话服务类"""
+@dataclass
+class CheckpointInfo:
+    preview: Optional[str] = None
+    message_count: int = 0
 
-    def __init__(self, user_service: UserService = None):
-        self.settings = get_settings()
-        self.user_service = user_service or get_user_service()
 
-    def _get_connection(self):
-        """获取数据库连接"""
-        return self.settings.db.get_connection(use_dict_cursor=True)
+class ThreadService(BaseService):
 
-    def _get_checkpointer(self) -> tuple:
-        """获取 checkpointer 和连接（调用方需要关闭连接）"""
+    def __init__(self):
+        super().__init__()
+        self.user_service = UserService()
+
+    def _get_checkpointer(self) -> tuple[PyMySQLSaver, object]:
+        """获取 checkpointer 和连接（调用方负责关闭连接）"""
         conn = self.settings.db.get_connection(use_dict_cursor=True)
-        checkpointer = PyMySQLSaver(conn)
-        return checkpointer, conn
+        return PyMySQLSaver(conn), conn
 
-    def _get_message_preview(self, checkpointer: PyMySQLSaver, thread_id: str, max_length: int = 50) -> str | None:
-        """获取会话最后一条消息的预览"""
+    def _get_checkpoint_info(self, checkpointer: PyMySQLSaver, thread_id: str, max_length: int = 50) -> CheckpointInfo:
+        """获取会话的 checkpoint 信息（预览 + 消息数量），只读取一次"""
         config = {"configurable": {"thread_id": thread_id}}
         ct = checkpointer.get_tuple(config)
-
         if not ct:
-            return None
+            return CheckpointInfo()
 
         messages = ct.checkpoint.get("channel_values", {}).get("messages", [])
         if not messages:
-            return None
+            return CheckpointInfo()
 
-        last_msg = messages[-1]
-        content = getattr(last_msg, "content", "")
-        return content[:max_length] + "..." if len(content) > max_length else content
+        content = getattr(messages[-1], "content", "")
+        preview = (content[:max_length] + "...") if len(content) > max_length else content
+        return CheckpointInfo(preview=preview, message_count=len(messages))
 
-    def _get_message_count(self, checkpointer: PyMySQLSaver, thread_id: str) -> int:
-        """获取会话的消息数量"""
-        config: dict[str, dict[str, str]] = {"configurable": {"thread_id": thread_id}}
-        ct = checkpointer.get_tuple(config)
-
-        if not ct:
-            return 0
-
-        messages = ct.checkpoint.get("channel_values", {}).get("messages", [])
-        return len(messages)
-
-    def _row_to_thread_item(self, row: Dict[str, Any], preview: Optional[str] = None, is_empty: bool = True) -> ThreadItem:
-        """将数据库行转换为 ThreadItem"""
+    def _row_to_thread_item(self, row: Dict[str, Any], info: CheckpointInfo = None) -> ThreadItem:
+        info = info or CheckpointInfo()
         return ThreadItem(
             id=row["id"],
-            thread_id=row["id"],  # 兼容旧接口
             user_id=row["user_id"],
             title=row.get("title"),
-            preview=preview or row.get("preview"),
-            is_empty=is_empty,
+            preview=info.preview or row.get("preview"),
+            is_empty=info.message_count == 0,
             created_at=row.get("created_at"),
             updated_at=row.get("updated_at"),
         )
 
+    # ── CRUD ──
+
     def create_thread(self, user_id: str, title: Optional[str] = None) -> ThreadItem:
-        """
-        创建新会话
-
-        Args:
-            user_id: 用户 ID
-            title: 会话标题（可选）
-
-        Returns:
-            新创建的会话
-
-        Raises:
-            ValueError: 如果用户已存在空会话
-        """
-        # 确保用户存在
         self.user_service.get_or_create_user(user_id)
 
-        # 检查是否已存在空会话
         if self.has_empty_thread(user_id):
             raise ValidationError("已存在一个空会话，请先在该会话中发送消息后再新建会话")
 
         thread_id = str(uuid.uuid4())
         conn = self._get_connection()
-
         try:
             with conn.cursor() as cur:
-                # 如果未提供标题，自动生成 "新会话 N"
                 if not title:
                     cur.execute("SELECT COUNT(*) as total FROM threads WHERE user_id = %s", (user_id,))
-                    count_row = cur.fetchone()
-                    count = count_row["total"] if count_row else 0
-                    title = f"新会话 {count + 1}"
+                    row = cur.fetchone()
+                    title = f"新会话 {(row['total'] if row else 0) + 1}"
 
                 cur.execute(
                     "INSERT INTO threads (id, user_id, title) VALUES (%s, %s, %s)",
-                    (thread_id, user_id, title)
+                    (thread_id, user_id, title),
                 )
                 conn.commit()
 
-                # 获取新创建的会话
-                cur.execute(
-                    "SELECT * FROM threads WHERE id = %s",
-                    (thread_id,)
-                )
-                row = cur.fetchone()
-                return self._row_to_thread_item(row)
+                cur.execute("SELECT * FROM threads WHERE id = %s", (thread_id,))
+                return self._row_to_thread_item(cur.fetchone())
         finally:
             conn.close()
 
     def get_thread(self, thread_id: str) -> Optional[ThreadItem]:
-        """
-        获取单个会话
-
-        Args:
-            thread_id: 会话 ID
-
-        Returns:
-            会话信息，不存在则返回 None
-        """
         conn = self._get_connection()
-
         try:
             with conn.cursor() as cur:
                 cur.execute("SELECT * FROM threads WHERE id = %s", (thread_id,))
                 row = cur.fetchone()
-                if row:
-                    return self._row_to_thread_item(row)
-                return None
+                return self._row_to_thread_item(row) if row else None
         finally:
             conn.close()
 
     def get_user_threads(self, user_id: str, page: int = 1, page_size: int = 20) -> tuple[List[ThreadItem], int]:
-        """
-        获取指定用户的所有会话列表（分页）
-
-        Args:
-            user_id: 用户 ID
-            page: 页码，从 1 开始
-            page_size: 每页数量
-
-        Returns:
-            (会话列表, 总数)
-        """
         conn = self._get_connection()
         checkpointer, cp_conn = self._get_checkpointer()
-
         try:
-            threads = []
-            total = 0
             offset = (page - 1) * page_size
-
             with conn.cursor() as cur:
-                # 1. 查询总数
+                cur.execute("SELECT COUNT(*) as total FROM threads WHERE user_id = %s", (user_id,))
+                total = (cur.fetchone() or {}).get("total", 0)
+
+                if total == 0:
+                    return [], 0
+
                 cur.execute(
-                    "SELECT COUNT(*) as total FROM threads WHERE user_id = %s",
-                    (user_id,)
+                    """SELECT * FROM threads
+                       WHERE user_id = %s ORDER BY updated_at DESC
+                       LIMIT %s OFFSET %s""",
+                    (user_id, page_size, offset),
                 )
-                total_row = cur.fetchone()
-                total = total_row["total"] if total_row else 0
+                rows = cur.fetchall()
 
-                if total > 0:
-                    # 2. 查询分页数据
-                    cur.execute(
-                        """SELECT * FROM threads 
-                           WHERE user_id = %s 
-                           ORDER BY updated_at DESC
-                           LIMIT %s OFFSET %s""",
-                        (user_id, page_size, offset)
-                    )
-                    rows = cur.fetchall()
-
-                    for row in rows:
-                        # 获取实时的消息预览和消息数量
-                        preview = self._get_message_preview(checkpointer, row["id"])
-                        message_count = self._get_message_count(checkpointer, row["id"])
-                        is_empty = message_count == 0
-                        threads.append(self._row_to_thread_item(row, preview, is_empty))
-
+            threads = []
+            for row in rows:
+                info = self._get_checkpoint_info(checkpointer, row["id"])
+                threads.append(self._row_to_thread_item(row, info))
             return threads, total
         finally:
             conn.close()
             cp_conn.close()
 
     def has_empty_thread(self, user_id: str) -> bool:
-        """
-        检查用户是否存在空会话（没有消息的会话）
-
-        Args:
-            user_id: 用户 ID
-
-        Returns:
-            是否存在空会话
-        """
         threads, _ = self.get_user_threads(user_id)
-        return any(thread.is_empty for thread in threads)
+        return any(t.is_empty for t in threads)
 
     def get_thread_history(self, user_id: str, thread_id: str) -> List[MessageItem]:
-        """
-        获取指定会话的历史消息
-
-        Args:
-            user_id: 用户 ID（用于权限验证）
-            thread_id: 会话 ID
-
-        Returns:
-            消息列表
-        """
         checkpointer, conn = self._get_checkpointer()
-
         try:
-            # 使用 thread_id 作为 checkpoint 标识
-            config = {"configurable": {"thread_id": thread_id}}
-            ct = checkpointer.get_tuple(config)
+            ct = checkpointer.get_tuple({"configurable": {"thread_id": thread_id}})
+            if not ct:
+                return []
 
-            messages = []
-            if ct:
-                raw_messages = ct.checkpoint.get("channel_values", {}).get("messages", [])
-                for msg in raw_messages:
-                    msg_type = getattr(msg, "type", "")
-                    content = getattr(msg, "content", "")
-                    
-                    # 获取更多消息属性
-                    name = getattr(msg, "name", None)
-                    tool_calls = getattr(msg, "tool_calls", None)
-                    tool_call_id = getattr(msg, "tool_call_id", None)
-                    msg_id = getattr(msg, "id", None)
-                    response_metadata = getattr(msg, "response_metadata", None)
-                    
-                    messages.append(MessageItem(
-                        content=content,
-                        type=msg_type,
-                        name=name,
-                        tool_calls=tool_calls,
-                        tool_call_id=tool_call_id,
-                        id=msg_id,
-                        response_metadata=response_metadata
-                    ))
-
-            return messages
+            raw_messages = ct.checkpoint.get("channel_values", {}).get("messages", [])
+            return [
+                MessageItem(
+                    content=getattr(m, "content", ""),
+                    type=getattr(m, "type", ""),
+                    name=getattr(m, "name", None),
+                    tool_calls=getattr(m, "tool_calls", None),
+                    tool_call_id=getattr(m, "tool_call_id", None),
+                    id=getattr(m, "id", None),
+                    response_metadata=getattr(m, "response_metadata", None),
+                )
+                for m in raw_messages
+            ]
         finally:
             conn.close()
 
     def update_thread(self, thread_id: str, title: Optional[str] = None, preview: Optional[str] = None) -> Optional[ThreadItem]:
-        """
-        更新会话信息
+        updates, params = [], []
+        if title is not None:
+            updates.append("title = %s")
+            params.append(title)
+        if preview is not None:
+            updates.append("preview = %s")
+            params.append(preview)
 
-        Args:
-            thread_id: 会话 ID
-            title: 新标题（可选）
-            preview: 新预览（可选）
+        if not updates:
+            return self.get_thread(thread_id)
 
-        Returns:
-            更新后的会话，不存在则返回 None
-        """
         conn = self._get_connection()
-
         try:
-            updates = []
-            params = []
-
-            if title is not None:
-                updates.append("title = %s")
-                params.append(title)
-
-            if preview is not None:
-                updates.append("preview = %s")
-                params.append(preview)
-
-            if not updates:
-                return self.get_thread(thread_id)
-
-            params.append(thread_id)
-
             with conn.cursor() as cur:
                 cur.execute(
                     f"UPDATE threads SET {', '.join(updates)} WHERE id = %s",
-                    tuple(params)
+                    (*params, thread_id),
                 )
                 conn.commit()
-
             return self.get_thread(thread_id)
         finally:
             conn.close()
 
     def delete_thread(self, thread_id: str) -> bool:
-        """
-        删除会话
-
-        Args:
-            thread_id: 会话 ID
-
-        Returns:
-            是否删除成功
-        """
         conn = self._get_connection()
-
         try:
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM threads WHERE id = %s", (thread_id,))
@@ -315,10 +183,3 @@ class ThreadService:
                 return cur.rowcount > 0
         finally:
             conn.close()
-
-
-# ==================== 依赖注入 ====================
-
-def get_thread_service() -> ThreadService:
-    """获取会话服务实例（用于 FastAPI 依赖注入）"""
-    return ThreadService()

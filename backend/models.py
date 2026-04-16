@@ -1,102 +1,81 @@
-# -*- coding: utf-8 -*-
-"""
-Pydantic 数据模型
+"""Pydantic 数据模型"""
 
-定义 API 请求和响应的数据结构。
-"""
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 
 from pydantic import BaseModel, Field
 
 
-# ==================== 请求模型 ====================
+# ── 请求模型 ──
 
 class ChatRequest(BaseModel):
-    """聊天请求"""
-    user_id: Optional[str] = Field(None, description="用户 ID (由后端自动填充)")
-    thread_id: str = Field(..., description="会话 ID")
-    message: str = Field(..., description="用户消息内容")
+    user_id: Optional[str] = None
+    thread_id: str
+    message: str
 
     def get_full_thread_id(self) -> str:
-        """获取完整的 thread_id（直接使用 thread_id 作为 checkpoint 标识）"""
         return self.thread_id
 
 
 class CreateThreadRequest(BaseModel):
-    """创建会话请求"""
-    user_id: Optional[str] = Field(None, description="用户 ID (由后端自动填充)")
-    title: Optional[str] = Field(None, description="会话标题（可选）")
+    user_id: Optional[str] = None
+    title: Optional[str] = None
 
 
 class UpdateThreadRequest(BaseModel):
-    """更新会话请求"""
-    title: Optional[str] = Field(None, description="会话标题")
+    title: Optional[str] = None
 
 
 class LoginRequest(BaseModel):
-    """登录请求"""
-    username: str = Field(..., description="用户名")
-    password: str = Field(..., description="密码")
+    username: str
+    password: str
 
+
+# ── 响应模型 ──
 
 class Token(BaseModel):
-    """Token 响应"""
     access_token: str
     token_type: str = "bearer"
     user_id: str
     username: str
 
 
-# ==================== 响应模型 ====================
-
 class MessageItem(BaseModel):
-    """单条消息"""
-    content: str = Field(..., description="消息内容")
-    type: str = Field(..., description="消息类型: 'human', 'ai', 'tool', etc.")
-    name: Optional[str] = Field(None, description="消息发送者名称")
-    tool_calls: Optional[List[Dict[str, Any]]] = Field(None, description="工具调用详情")
-    tool_call_id: Optional[str] = Field(None, description="工具消息对应的调用ID")
-    id: Optional[str] = Field(None, description="消息ID")
-    response_metadata: Optional[Dict[str, Any]] = Field(None, description="响应元数据")
+    content: str
+    type: str
+    name: Optional[str] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None
+    tool_call_id: Optional[str] = None
+    id: Optional[str] = None
+    response_metadata: Optional[Dict[str, Any]] = None
 
 
 class ThreadItem(BaseModel):
-    """会话列表项"""
-    id: str = Field(..., description="会话唯一标识")
-    thread_id: str = Field(..., description="会话 ID（兼容旧接口）")
-    user_id: str = Field(..., description="用户 ID")
-    title: Optional[str] = Field(None, description="会话标题")
-    preview: Optional[str] = Field(None, description="最后一条消息的预览")
-    is_empty: bool = Field(True, description="会话是否为空（没有消息）")
-    created_at: Optional[datetime] = Field(None, description="创建时间")
-    updated_at: Optional[datetime] = Field(None, description="更新时间")
+    id: str
+    thread_id: str = None  # 兼容旧前端，序列化时自动等于 id
+    user_id: str
+    title: Optional[str] = None
+    preview: Optional[str] = None
+    is_empty: bool = True
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    def model_post_init(self, __context):
+        if self.thread_id is None:
+            self.thread_id = self.id
 
 
 class ThreadListResponse(BaseModel):
-    """会话列表响应"""
     threads: List[ThreadItem]
-    total: int = Field(..., description="总记录数")
-    page: int = Field(..., description="当前页码")
-    page_size: int = Field(..., description="每页数量")
+    total: int
+    page: int
+    page_size: int
 
 
 class HistoryResponse(BaseModel):
-    """历史消息响应"""
     thread_id: str
     messages: List[MessageItem]
 
 
 class CreateThreadResponse(BaseModel):
-    """创建会话响应"""
     thread: ThreadItem
-
-
-# ==================== SSE 响应类型 ====================
-
-class SSEMessage(BaseModel):
-    """SSE 消息格式"""
-    type: str = Field(..., description="消息类型: 'token', 'end', 'error'")
-    content: Optional[str] = Field(None, description="消息内容")
-    message: Optional[str] = Field(None, description="错误信息")
-

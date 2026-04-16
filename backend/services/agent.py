@@ -1,15 +1,15 @@
-# -*- coding: utf-8 -*-
-"""
-Agent 服务
+"""Agent 服务 — LangGraph ReAct Agent 创建与流式聊天"""
 
-管理 LangGraph Agent 的创建和生命周期。
-"""
+import asyncio
 import json
+import os
+from collections.abc import AsyncIterator
 from datetime import datetime
-from typing import Iterator
+from queue import Queue, Empty
+from threading import Thread
 
 from langchain.chat_models import init_chat_model
-from langchain_core.messages import SystemMessage, ToolMessage
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.checkpoint.mysql.pymysql import PyMySQLSaver
 from langgraph.prebuilt import create_react_agent as create_agent
@@ -18,87 +18,147 @@ from config import get_settings
 from logger import get_logger
 from models import ChatRequest
 from prompts import SYSTEM_PROMPT
-from services.vector import get_vector_service
-from services.token import get_token_usage_service
+from services.token import TokenUsageService
 
 logger = get_logger(__name__)
 
+# data 目录路径（相对于 backend/）
+_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data")
+
+# 分类 → 目录名映射
+_CATEGORIES = {
+    "个人信息": "个人信息",
+    "个人技能": "个人技能",
+    "工作经历": "工作经历",
+    "教育经历": "教育经历",
+    "证书": "证书",
+    "项目经历": "项目经历",
+}
+
+
+# ── 消息裁剪 ──
 
 def filter_messages(state):
-    """
-    只保留最近的 20 条消息（约 10 轮对话），同时：
-    1. 始终保留第一条 SystemMessage
-    2. 确保不切断工具调用的中间状态（AI 的 tool_calls 和对应的 ToolMessage 保持完整）
-    
-    返回 llm_input_messages 键，这样原始消息历史保持不变，只修改传给 LLM 的输入。
-    """
+    """保留最近 20 条消息，始终保留首条 SystemMessage，不切断工具调用序列"""
     messages = state["messages"]
     if len(messages) <= 20:
         return {"llm_input_messages": messages}
 
-    # 1. 提取第一条 SystemMessage（如果存在）
-    system_message = None
-    remaining_messages = []
+    system_msg = None
+    rest = []
     for msg in messages:
-        if isinstance(msg, SystemMessage) and system_message is None:
-            system_message = msg
+        if isinstance(msg, SystemMessage) and system_msg is None:
+            system_msg = msg
         else:
-            remaining_messages.append(msg)
+            rest.append(msg)
 
-    # 2. 从 remaining_messages 中取最后 N 条（为 SystemMessage 预留 1 条位置）
-    max_recent = 19 if system_message else 20
-    recent_messages = remaining_messages[-max_recent:] if len(remaining_messages) > max_recent else remaining_messages
+    max_recent = 19 if system_msg else 20
+    recent = rest[-max_recent:]
 
-    # 3. 确保不从工具调用序列中间开始
-    #    - 如果第一条是 ToolMessage，说明其对应的 AIMessage (with tool_calls) 被切掉了
-    #    - 需要继续向前删除，直到遇到非 ToolMessage
-    while recent_messages and isinstance(recent_messages[0], ToolMessage):
-        recent_messages = recent_messages[1:]
+    # 跳过被截断的 ToolMessage（对应的 AIMessage 已被切掉）
+    while recent and isinstance(recent[0], ToolMessage):
+        recent = recent[1:]
 
-    # 4. 组合结果
-    if system_message:
-        return {"llm_input_messages": [system_message] + recent_messages}
-    return {"llm_input_messages": recent_messages}
+    result = [system_msg] + recent if system_msg else recent
+    return {"llm_input_messages": result}
+
+
+# ── 文件读取工具 ──
+
+def _read_file(filepath: str) -> str:
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        logger.error(f"读取文件失败 {filepath}: {e}")
+        return f"[读取失败: {filepath}]"
+
+
+def _find_files(category: str, query: str = None) -> list[str]:
+    """在指定分类目录下查找文件，query 用于模糊匹配文件名"""
+    dir_name = _CATEGORIES.get(category)
+    if not dir_name:
+        return []
+
+    cat_dir = os.path.join(_DATA_DIR, dir_name)
+    if not os.path.isdir(cat_dir):
+        return []
+
+    if query and category == "项目经历":
+        # 项目经历：模糊匹配文件名
+        matched = [
+            os.path.join(cat_dir, f) for f in os.listdir(cat_dir)
+            if query.lower() in f.lower() and not f.endswith("汇总.md")
+        ]
+        return matched if matched else [os.path.join(cat_dir, "项目汇总.md")]
+
+    # 其他分类或无 query：读取该分类下所有 .md 文件
+    return [
+        os.path.join(cat_dir, f)
+        for f in sorted(os.listdir(cat_dir))
+        if f.endswith(".md")
+    ]
+
+
+@tool
+def search_resume(category: str, query: str = None) -> str:
+    """查询简历数据。
+
+    根据分类加载对应的简历文档内容。如果指定了 query，会在项目经历中模糊匹配文件名。
+
+    可用分类：个人信息、个人技能、工作经历、教育经历、证书、项目经历
+
+    Args:
+        category: 数据分类名称，如 "个人信息"、"项目经历"
+        query: 可选关键词，用于在项目经历中定位特定项目文件
+    """
+    logger.info(f"查询简历: category={category}, query={query}")
+
+    files = _find_files(category, query)
+    if not files:
+        available = "、".join(_CATEGORIES.keys())
+        return f"未找到分类 '{category}' 的数据。可用分类：{available}"
+
+    contents = [_read_file(f) for f in files]
+    return "\n\n---\n\n".join(contents)
+
+
+@tool
+def getNowDateTime() -> str:
+    """获取当前时间"""
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+# ── SSE 辅助 ──
+
+def _sse(data: dict) -> str:
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+# ── Agent 单例 ──
+
+_agent_service = None
+
 
 class AgentService:
-    """Agent 服务类（单例模式）"""
-
-    _instance = None
     _agent = None
     _checkpointer = None
 
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-
-    def _create_model(self):
-        """创建语言模型"""
-        settings = get_settings()
-        return init_chat_model(
-            settings.model.model_name,
-            temperature=settings.model.temperature,
-            timeout=settings.model.timeout,
-            max_tokens=settings.model.max_tokens,
-        )
-
-    def _create_checkpointer(self) -> PyMySQLSaver:
-        """创建检查点存储器"""
-        settings = get_settings()
-        conn = settings.db.get_connection()
-        checkpointer = PyMySQLSaver(conn)
-        checkpointer.setup()  # 初始化数据库表结构
-        return checkpointer
-
     def get_agent(self):
-        """获取或创建 Agent 实例"""
         if self._agent is None:
-            model = self._create_model()
-            self._checkpointer = self._create_checkpointer()
-
+            settings = get_settings()
+            model = init_chat_model(
+                settings.model.model_name,
+                temperature=settings.model.temperature,
+                timeout=settings.model.timeout,
+                max_tokens=settings.model.max_tokens,
+            )
+            conn = settings.db.get_connection()
+            self._checkpointer = PyMySQLSaver(conn)
+            self._checkpointer.setup()
             self._agent = create_agent(
                 model=model,
-                tools=[search,getNowDateTime],
+                tools=[search_resume, getNowDateTime],
                 prompt=SYSTEM_PROMPT,
                 checkpointer=self._checkpointer,
                 pre_model_hook=filter_messages,
@@ -106,90 +166,83 @@ class AgentService:
         return self._agent
 
     def get_checkpointer(self) -> PyMySQLSaver:
-        """获取检查点存储器"""
         if self._checkpointer is None:
-            self._checkpointer = self._create_checkpointer()
+            settings = get_settings()
+            conn = settings.db.get_connection()
+            self._checkpointer = PyMySQLSaver(conn)
+            self._checkpointer.setup()
         return self._checkpointer
 
 
-# ==================== 工具函数 ====================
-
-@tool
-def search(query: str, category: str = None) -> str:
-    """
-    通过关键词检索知识库。
-    
-    Args:
-        query: 搜索关键词
-        category: 分类过滤（可选），使用目录名作为分类
-    
-    Returns:
-        搜索结果的文本描述，或错误提示信息
-    """
-    logger.info(f"正在搜索: {query}, category: {category}")
-    try:
-        vector_service = get_vector_service()
-        results = vector_service.search(query, category)
-        if not results:
-            return f"未找到与 '{query}' 相关的内容。"
-        
-        # 将 Document 列表转换为文本
-        output = []
-        for i, doc in enumerate(results, 1):
-            content = doc.page_content if hasattr(doc, 'page_content') else str(doc)
-            output.append(f"[{i}] {content}")
-        return "\n\n".join(output)
-    except Exception as e:
-        logger.error(f"搜索时发生错误: {e}")
-        return f"搜索失败，请稍后重试。错误信息：{str(e)}"
-
-@tool
-def getNowDateTime()->str:
-    """
-    获取当前时间。
-    """
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-def sse_format(data: str) -> str:
-    """格式化 SSE 消息"""
-    return f"data: {data}\n\n"
+def get_agent_service() -> AgentService:
+    global _agent_service
+    if _agent_service is None:
+        _agent_service = AgentService()
+    return _agent_service
 
 
-def stream_chat(agent, req: ChatRequest) -> Iterator[str]:
-    """
-    流式聊天处理
+def get_agent():
+    return get_agent_service().get_agent()
 
-    Args:
-        agent: LangGraph Agent 实例
-        req: 聊天请求
 
-    Yields:
-        SSE 格式的响应数据
-    """
-    # 参数校验
-    if any(not v or not str(v).strip() for v in (req.user_id, req.thread_id, req.message)):
-        yield sse_format(json.dumps({"type": "error", "message": "请检查参数后再进行调用"}))
+# ── 流式聊天 ──
+
+_SENTINEL = object()
+
+
+async def stream_chat(agent, req: ChatRequest) -> AsyncIterator[str]:
+    if not all(str(v).strip() for v in (req.user_id, req.thread_id, req.message)):
+        yield _sse({"type": "error", "message": "请检查参数后再进行调用"})
         return
 
     config = {"configurable": {"thread_id": req.get_full_thread_id()}}
+    token_service = TokenUsageService()
+    model_name = get_settings().model.model_name
+
+    queue: Queue = Queue()
+
+    def _run_stream():
+        """在子线程中运行同步 agent.stream()，把结果逐个放入队列"""
+        try:
+            logger.info("stream start")
+            for chunk in agent.stream(
+                {"messages": [HumanMessage(content=req.message)]},
+                config=config,
+            ):
+                queue.put(chunk)
+        except Exception as exc:
+            queue.put(exc)
+        finally:
+            queue.put(_SENTINEL)
+
+    thread = Thread(target=_run_stream, daemon=True)
+    thread.start()
 
     try:
-        # 获取 token 服务
-        token_service = get_token_usage_service()
-        model_name = get_settings().model.model_name
+        while True:
+            # 非阻塞轮询，让出事件循环
+            while True:
+                try:
+                    item = queue.get_nowait()
+                    break
+                except Empty:
+                    await asyncio.sleep(0.02)
 
-        for chunk in agent.stream(
-            {"messages": [{"role": "user", "content": req.message}]},
-            config=config,
-        ):
-            # 处理 agent 返回的消息（AI 响应）
-            agent_chunk = chunk.get("agent")
-            if agent_chunk and "messages" in agent_chunk:
-                msg = agent_chunk["messages"][-1]
-                response_data = {"type": "token", "content": msg.content}
+            if item is _SENTINEL:
+                break
 
-                # 拦截并记录 Token 消耗 (usage_metadata 是 LangChain 官方结构)
-                if hasattr(msg, 'usage_metadata') and msg.usage_metadata:
+            if isinstance(item, Exception):
+                raise item
+
+            chunk = item
+
+            # AI 响应
+            agent_msg = (chunk.get("agent") or {}).get("messages")
+            if agent_msg:
+                msg = agent_msg[-1]
+                resp = {"type": "token", "content": msg.content}
+
+                if hasattr(msg, "usage_metadata") and msg.usage_metadata:
                     usage = msg.usage_metadata
                     token_service.save_usage(
                         user_id=req.user_id,
@@ -197,47 +250,33 @@ def stream_chat(agent, req: ChatRequest) -> Iterator[str]:
                         model_name=model_name,
                         prompt_tokens=usage.get("input_tokens", 0),
                         completion_tokens=usage.get("output_tokens", 0),
-                        total_tokens=usage.get("total_tokens", 0)
+                        total_tokens=usage.get("total_tokens", 0),
                     )
-                    logger.info(f"已记录 Token 消耗: {usage}")
 
-                # 如果有工具调用，添加到响应中
-                if hasattr(msg, 'tool_calls') and msg.tool_calls:
-                    response_data["tool_calls"] = [
-                        {
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    for tc in msg.tool_calls:
+                        yield _sse({
+                            "type": "tool_call",
                             "id": tc.get("id", ""),
                             "name": tc.get("name", ""),
-                            "args": tc.get("args", {})
-                        }
-                        for tc in msg.tool_calls
-                    ]
-                
-                yield sse_format(json.dumps(response_data, ensure_ascii=False))
-            
-            # 处理 tools 返回的消息（工具执行结果）
-            tools_chunk = chunk.get("tools")
-            if tools_chunk and "messages" in tools_chunk:
-                for tool_msg in tools_chunk["messages"]:
-                    tool_result = {
+                        })
+
+                yield _sse(resp)
+
+            # 工具结果
+            tool_msgs = (chunk.get("tools") or {}).get("messages")
+            if tool_msgs:
+                for tm in tool_msgs:
+                    yield _sse({
                         "type": "tool_result",
-                        "name": getattr(tool_msg, 'name', ''),
-                        "tool_call_id": getattr(tool_msg, 'tool_call_id', ''),
-                        "content": tool_msg.content if hasattr(tool_msg, 'content') else str(tool_msg)
-                    }
-                    yield sse_format(json.dumps(tool_result, ensure_ascii=False))
-        
-        yield sse_format(json.dumps({"type": "end"}))
+                        "name": getattr(tm, "name", ""),
+                        "tool_call_id": getattr(tm, "tool_call_id", ""),
+                        "content": getattr(tm, "content", str(tm)),
+                    })
+
+        yield _sse({"type": "end"})
     except Exception as exc:
-        yield sse_format(json.dumps({"type": "error", "content": str(exc)}))
-
-
-# ==================== 依赖注入 ====================
-
-def get_agent_service() -> AgentService:
-    """获取 Agent 服务实例（用于 FastAPI 依赖注入）"""
-    return AgentService()
-
-
-def get_agent():
-    """获取 Agent 实例（用于 FastAPI 依赖注入）"""
-    return AgentService().get_agent()
+        import traceback
+        tb = traceback.format_exc()
+        logger.error(f"流式聊天异常: {type(exc).__name__}: {exc}\n{tb}")
+        yield _sse({"type": "error", "content": f"{type(exc).__name__}: {exc}"})

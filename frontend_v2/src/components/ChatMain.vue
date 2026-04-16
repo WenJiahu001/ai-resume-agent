@@ -26,6 +26,7 @@
           v-for="(msg, index) in chatStore.messages"
           :key="index"
           :message="msg"
+          :is-continuation="index > 0 && chatStore.messages[index-1].type !== 'human' && msg.type !== 'human'"
         />
 
         <!-- 占位，确保底部不被遮挡 -->
@@ -78,7 +79,7 @@ const scrollToBottom = () => {
 };
 
 const handleSend = async () => {
-  if (!input.trim() || !chatStore.activeChatId) return;
+  if (!input.value.trim() || !chatStore.activeChatId) return;
   const content = input.value;
   input.value = '';
 
@@ -92,7 +93,7 @@ watch(() => chatStore.messages.length, () => {
 });
 
 // 监听 AI 正在思考时的内容更新，实现平滑滚动
-watch(() => chatStore.messages[chatStore.messages.length - 1]?.content, () => {
+watch(() => chatStore.messages[chatStore.messages.length - 1]?.displayedContent, () => {
   if (scrollContainer.value) {
     const isAtBottom = scrollContainer.value.scrollHeight - scrollContainer.value.scrollTop - scrollContainer.value.clientHeight < 100;
     if (isAtBottom) {

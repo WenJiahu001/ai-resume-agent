@@ -70,6 +70,7 @@
 import { Plus as PlusIcon, Trash2 as Trash2Icon } from 'lucide-vue-next';
 import { useChatStore } from '../store/chat';
 import { useAuthStore } from '../store/auth';
+import LoadingDots from './LoadingDots.vue';
 
 const chatStore = useChatStore();
 const authStore = useAuthStore();
