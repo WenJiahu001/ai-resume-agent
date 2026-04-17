@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from config import get_settings
-from routes import chat_router, thread_router, vector_router, auth_router
+from routes import chat_router, thread_router, auth_router
 from exceptions import AppException, NotFoundError, ValidationError
 from response import success
 from logger import get_logger
@@ -36,7 +36,7 @@ def create_app() -> FastAPI:
         allow_headers=settings.app.cors_allow_headers,
     )
 
-    for r in (auth_router, chat_router, thread_router, vector_router):
+    for r in (auth_router, chat_router, thread_router):
         app.include_router(r)
 
     # 异常处理

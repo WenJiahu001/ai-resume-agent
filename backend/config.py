@@ -69,11 +69,6 @@ class AuthConfig:
     access_token_expire_minutes: int = field(default_factory=lambda: int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440")))
 
 
-@dataclass(frozen=True)
-class VectorConfig:
-    qdrant_url: str = field(default_factory=lambda: os.getenv("QDRANT_URL", "http://localhost:6333"))
-    collection_name: str = field(default_factory=lambda: os.getenv("QDRANT_COLLECTION", "demo"))
-
 
 @dataclass(frozen=True)
 class AppConfig:
@@ -87,7 +82,6 @@ class AppConfig:
 class Settings:
     db: DatabaseConfig = field(default_factory=DatabaseConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
-    vector: VectorConfig = field(default_factory=VectorConfig)
     app: AppConfig = field(default_factory=AppConfig)
     auth: AuthConfig = field(default_factory=AuthConfig)
 
