@@ -6,11 +6,13 @@ import os
 from collections.abc import AsyncIterator
 from datetime import datetime
 from queue import Queue, Empty
-from threading import Thread
+from threading import Thread, Event
 
+from fastapi import Request
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
+from langchain_core.callbacks.base import BaseCallbackHandler
 from langgraph.checkpoint.mysql.pymysql import PyMySQLSaver
 from langgraph.prebuilt import create_react_agent as create_agent
 
@@ -189,13 +191,31 @@ def get_agent():
 
 _SENTINEL = object()
 
+class ClientDisconnected(Exception):
+    pass
 
-async def stream_chat(agent, req: ChatRequest) -> AsyncIterator[str]:
+async def stream_chat(agent, req: ChatRequest, request: Request = None) -> AsyncIterator[str]:
     if not all(str(v).strip() for v in (req.user_id, req.thread_id, req.message)):
         yield _sse({"type": "error", "message": "请检查参数后再进行调用"})
         return
 
-    config = {"configurable": {"thread_id": req.get_full_thread_id()}}
+    cancel_event = Event()
+
+    class AbortCallbackHandler(BaseCallbackHandler):
+        def _check(self):
+            if cancel_event.is_set():
+                raise ClientDisconnected("Client disconnected, aborting generation.")
+        def on_llm_new_token(self, **kwargs):
+            self._check()
+        def on_llm_start(self, *args, **kwargs):
+            self._check()
+        def on_tool_start(self, *args, **kwargs):
+            self._check()
+
+    config = {
+        "configurable": {"thread_id": req.get_full_thread_id()},
+        "callbacks": [AbortCallbackHandler()]
+    }
     token_service = TokenUsageService()
     model_name = get_settings().model.model_name
 
@@ -209,9 +229,14 @@ async def stream_chat(agent, req: ChatRequest) -> AsyncIterator[str]:
                 {"messages": [HumanMessage(content=req.message)]},
                 config=config,
             ):
+                if cancel_event.is_set():
+                    break
                 queue.put(chunk)
+        except ClientDisconnected:
+            logger.info("Client disconnected, agent.stream aborted.")
         except Exception as exc:
-            queue.put(exc)
+            if not cancel_event.is_set():
+                queue.put(exc)
         finally:
             queue.put(_SENTINEL)
 
@@ -220,13 +245,25 @@ async def stream_chat(agent, req: ChatRequest) -> AsyncIterator[str]:
 
     try:
         while True:
+            if request and await request.is_disconnected():
+                logger.warning("客户端已断开，中止后台生成...")
+                cancel_event.set()
+                break
+
             # 非阻塞轮询，让出事件循环
             while True:
+                if request and await request.is_disconnected():
+                    cancel_event.set()
                 try:
                     item = queue.get_nowait()
                     break
                 except Empty:
+                    if cancel_event.is_set():
+                        break
                     await asyncio.sleep(0.02)
+
+            if cancel_event.is_set():
+                break
 
             if item is _SENTINEL:
                 break

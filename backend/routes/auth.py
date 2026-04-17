@@ -6,6 +6,7 @@ from deps import get_current_user
 from models import Token, LoginRequest
 from response import success
 from services.auth import AuthService
+from services.token import TokenUsageService
 
 router = APIRouter(prefix="/api/auth", tags=["认证"])
 
@@ -38,3 +39,11 @@ def login(
 @router.get("/me", summary="获取当前用户")
 def read_users_me(current_user: dict = Depends(get_current_user)):
     return success(data=current_user)
+
+@router.get("/me/usage", summary="获取当前用户Token消耗情况")
+def read_users_me_usage(
+    current_user: dict = Depends(get_current_user),
+    token_usage_service: TokenUsageService = Depends(TokenUsageService),
+):
+    usage = token_usage_service.get_user_total_usage(current_user["id"])
+    return success(data=usage)

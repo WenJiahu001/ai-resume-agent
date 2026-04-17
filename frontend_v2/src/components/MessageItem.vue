@@ -20,10 +20,14 @@
         <div class="flex-1 min-w-0">
           <!-- 类型：AI 文本 -->
           <template v-if="message.type === 'ai'">
-            <!-- 消息文本 -->
-            <div v-if="(message.displayedContent ?? message.content) !== ''" class="text-sm text-neutral-700 leading-relaxed whitespace-pre-wrap break-words">
-              {{ message.displayedContent ?? message.content }}
-              <span v-if="message.isThinking" class="inline-block w-0.5 h-4 ml-0.5 align-middle animate-pulse bg-neutral-400"></span>
+            <!-- 消息文本通过 Markdown 渲染 -->
+            <div v-if="(message.displayedContent ?? message.content) !== ''" class="relative group/msg">
+              <div
+                class="prose prose-sm max-w-none prose-neutral leading-relaxed break-words prose-p:my-1.5 prose-pre:bg-[#0d1117] prose-pre:p-0 prose-pre:rounded-lg prose-pre:overflow-hidden prose-a:text-blue-600 hover:prose-a:text-blue-500 prose-ul:my-1 prose-li:my-0.5 prose-table:border prose-th:bg-neutral-50 prose-td:border-t"
+                v-html="parsedContent"
+              ></div>
+              <!-- 打字机思考指针 -->
+              <span v-if="message.isThinking" class="inline-block w-1.5 h-4 ml-1 align-middle animate-pulse bg-neutral-400 mt-1"></span>
             </div>
 
             <!-- 思考中动画 -->
@@ -70,11 +74,48 @@
 </template>
 
 <script setup lang="ts">
-import { Sparkles as SparklesIcon, Box as BoxIcon, ChevronDown as ChevronDownIcon, Terminal as TerminalIcon, Check as CheckIcon } from 'lucide-vue-next';
+import { computed } from 'vue';
+import { Sparkles as SparklesIcon, ChevronDown as ChevronDownIcon, Terminal as TerminalIcon, Check as CheckIcon } from 'lucide-vue-next';
+import { marked } from 'marked';
+import hljs from 'highlight.js';
+import DOMPurify from 'dompurify';
 import type { Message } from '../store/chat';
 
-defineProps<{
+const props = defineProps<{
   message: Message;
   isContinuation?: boolean;
 }>();
+
+// 配置 marked 解析器
+marked.setOptions({
+  breaks: true,
+  gfm: true,
+});
+
+// 重写代码块渲染以支持 highlight.js
+const renderer = new marked.Renderer();
+renderer.code = (codeBlock) => {
+  // marked 18 新 API: 传入的是一个对象 { text, lang }
+  const text = codeBlock.text;
+  const lang = codeBlock.lang || '';
+  const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext';
+  let highlighted = '';
+  try {
+    highlighted = hljs.highlight(text, { language }).value;
+  } catch (e) {
+    highlighted = hljs.highlightAuto(text).value;
+  }
+  return `<pre><div class="flex items-center justify-between px-4 py-1.5 bg-[#161b22] text-[#8b949e] text-xs font-mono border-b border-[#30363d]"><span class="uppercase tracking-wider">${language}</span></div><code class="hljs language-${language} block px-4 py-3 text-sm overflow-x-auto custom-scrollbar">${highlighted}</code></pre>`;
+};
+marked.use({ renderer });
+
+// 响应式解析 Markdown 内容
+const parsedContent = computed(() => {
+  if (props.message.type !== 'ai') return '';
+  const rawText = props.message.displayedContent ?? props.message.content;
+  if (!rawText) return '';
+
+  const rawHtml = marked.parse(rawText) as string;
+  return DOMPurify.sanitize(rawHtml);
+});
 </script>

@@ -27,6 +27,8 @@ onMounted(async () => {
   if (authStore.isLoggedIn) {
     // 登录后初始化加载会话列表
     await chatStore.loadThreads();
+    // 同时也拉取一下使用统计
+    await authStore.fetchUsage();
   }
 });
 </script>

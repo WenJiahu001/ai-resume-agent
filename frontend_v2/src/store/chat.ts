@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import api from '../api/request';
+import { useAuthStore } from './auth';
 
 export interface Message {
   type: string;
@@ -30,6 +31,8 @@ export const useChatStore = defineStore('chat', {
     pageSize: 10,
     total: 0,
     isLoadingMore: false,
+    isGenerating: false,
+    abortController: null as AbortController | null,
   }),
   getters: {
     activeChat: (state) => state.chats.find(c => c.id === state.activeChatId) || null,
@@ -37,6 +40,13 @@ export const useChatStore = defineStore('chat', {
     hasEmptyChat: (state) => state.chats.some(c => c.isEmptyFromServer === true),
   },
   actions: {
+    abortGeneration() {
+      if (this.abortController) {
+        this.abortController.abort();
+        this.abortController = null;
+      }
+      this.isGenerating = false;
+    },
     async loadThreads(isAppend = false) {
       if (this.isLoadingMore) return;
       this.isLoadingMore = true;
@@ -140,10 +150,13 @@ export const useChatStore = defineStore('chat', {
       }
     },
     async sendMessage(content: string) {
-      if (!this.activeChatId || !content.trim()) return;
+      if (!this.activeChatId || !content.trim() || this.isGenerating) return;
 
       const chat = this.activeChat;
       if (!chat) return;
+
+      this.isGenerating = true;
+      this.abortController = new AbortController();
 
       // 1. 添加用户消息
       const humanMsg: Message = { type: 'human', content };
@@ -200,7 +213,8 @@ export const useChatStore = defineStore('chat', {
           body: JSON.stringify({
             thread_id: this.activeChatId,
             message: content
-          })
+          }),
+          signal: this.abortController.signal
         });
 
         if (!response.body) return;
@@ -328,18 +342,26 @@ export const useChatStore = defineStore('chat', {
             }
           }
         }
-      } catch (error) {
-        console.error('Failed to send message:', error);
-        aiMsg.content = '发送失败，请稍后重试';
+      } catch (error: any) {
+        if (error.name === 'AbortError') {
+          console.log('用户中断了生成');
+          aiMsg.content += '\n\n*[生成已被中断]*';
+        } else {
+          console.error('Failed to send message:', error);
+          aiMsg.content = '发送失败，请稍后重试';
+        }
         aiMsg.displayedContent = aiMsg.content;
         aiMsg.isThinking = false;
       } finally {
+        this.isGenerating = false;
+        this.abortController = null;
         aiMsg.isThinking = false;
         isStreamFinished = true;
         const lastMsg = chat.messages[chat.messages.length - 1];
         if (lastMsg && lastMsg.type === 'ai' && !lastMsg.content && (!lastMsg.toolCalls || lastMsg.toolCalls.length === 0)) {
           chat.messages.pop();
         }
+        useAuthStore().fetchUsage();
       }
     }
   },

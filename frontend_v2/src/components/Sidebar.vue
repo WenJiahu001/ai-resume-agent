@@ -49,8 +49,28 @@
       </div>
     </div>
 
-    <!-- 底部用户信息 -->
-    <div class="p-4 border-t border-neutral-200">
+    <!-- 底部用户信息和 Token 消耗 -->
+    <div class="px-4 py-3 border-t border-neutral-200">
+      <div v-if="authStore.usage" class="mb-3 p-2.5 bg-neutral-100 rounded-lg shrink-0">
+        <div class="text-[11px] text-neutral-500 font-medium tracking-wide flex items-center justify-between mb-1">
+            <span>使用统计</span>
+        </div>
+        <div class="space-y-1">
+          <div class="flex justify-between text-xs">
+            <span class="text-neutral-500">请求次数:</span>
+            <span class="text-neutral-700 font-mono">{{ authStore.usage.call_count }}</span>
+          </div>
+          <div class="flex justify-between text-xs">
+            <span class="text-neutral-500">消耗 Tokens:</span>
+            <span class="text-neutral-700 font-mono">{{ authStore.usage.grand_total_tokens.toLocaleString() }}</span>
+          </div>
+          <div class="flex justify-between text-xs">
+            <span class="text-neutral-500">预估费用:</span>
+            <span class="text-neutral-700 font-mono">${{ authStore.usage.total_cost.toFixed(4) }}</span>
+          </div>
+        </div>
+      </div>
+      
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-2 min-w-0">
           <div class="w-7 h-7 rounded-full bg-neutral-200 flex items-center justify-center text-xs font-medium text-neutral-600 shrink-0">
