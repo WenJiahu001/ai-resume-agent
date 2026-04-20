@@ -34,7 +34,7 @@ class TokenUsageService(BaseService):
                 conn.commit()
                 return True
         except Exception as e:
-            logger.error(f"保存 Token 消耗记录失败: {e}")
+            logger.warning(f"保存 Token 消耗记录失败（不影响对话）: {e}")
             return False
         finally:
             conn.close()

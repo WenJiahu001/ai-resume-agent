@@ -124,8 +124,25 @@ class ThreadService(BaseService):
             cp_conn.close()
 
     def has_empty_thread(self, user_id: str) -> bool:
-        threads, _ = self.get_user_threads(user_id)
-        return any(t.is_empty for t in threads)
+        """检查是否存在空会话，使用 SQL 层面 LIMIT 1 优化"""
+        checkpointer, conn = self._get_checkpointer()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id FROM threads WHERE user_id = %s ORDER BY updated_at DESC LIMIT 1",
+                    (user_id,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return False
+                thread_id = row["id"]
+            ct = checkpointer.get_tuple({"configurable": {"thread_id": thread_id}})
+            if not ct:
+                return True
+            messages = ct.checkpoint.get("channel_values", {}).get("messages", [])
+            return len(messages) == 0
+        finally:
+            conn.close()
 
     def get_thread_history(self, user_id: str, thread_id: str) -> List[MessageItem]:
         checkpointer, conn = self._get_checkpointer()

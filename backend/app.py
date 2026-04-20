@@ -61,7 +61,7 @@ def create_app() -> FastAPI:
         return _error_response(500, "INTERNAL_ERROR", "服务器内部错误")
 
     # 前端静态文件
-    frontend_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend")
+    frontend_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "frontend_v2")
     if os.path.exists(frontend_dir):
         app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="static")
     else:

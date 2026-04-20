@@ -15,7 +15,7 @@ class DatabaseConfig:
     host: str = field(default_factory=lambda: os.getenv("DB_HOST", "localhost"))
     port: int = field(default_factory=lambda: int(os.getenv("DB_PORT", "3306")))
     user: str = field(default_factory=lambda: os.getenv("DB_USER", "root"))
-    password: str = field(default_factory=lambda: os.getenv("DB_PASSWORD", "123456"))
+    password: str = field(default_factory=lambda: os.getenv("DB_PASSWORD", ""))
     database: str = field(default_factory=lambda: os.getenv("DB_NAME", "eat"))
 
     def get_connection(self, use_dict_cursor: bool = False) -> pymysql.Connection:
@@ -64,17 +64,21 @@ class ModelConfig:
 
 @dataclass(frozen=True)
 class AuthConfig:
-    jwt_secret: str = field(default_factory=lambda: os.getenv("JWT_SECRET", "your-secret-key-should-be-changed"))
+    jwt_secret: str = field(default_factory=lambda: os.getenv("JWT_SECRET", ""))
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = field(default_factory=lambda: int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440")))
+
+    def __post_init__(self):
+        if not self.jwt_secret:
+            raise ValueError("JWT_SECRET 环境变量未设置，请配置安全的 JWT 密钥")
 
 
 
 @dataclass(frozen=True)
 class AppConfig:
-    cors_origins: list = field(default_factory=lambda: ["*"])
+    cors_origins: list = field(default_factory=lambda: os.getenv("CORS_ORIGINS", "http://localhost:5173").split(","))
     cors_allow_credentials: bool = True
-    cors_allow_methods: list = field(default_factory=lambda: ["*"])
+    cors_allow_methods: list = field(default_factory=lambda: ["GET", "POST", "PUT", "DELETE", "OPTIONS"])
     cors_allow_headers: list = field(default_factory=lambda: ["*"])
 
 

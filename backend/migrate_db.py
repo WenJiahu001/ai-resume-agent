@@ -8,7 +8,7 @@ def migrate():
     host = os.getenv("DB_HOST", "localhost")
     port = int(os.getenv("DB_PORT", "3306"))
     user = os.getenv("DB_USER", "root")
-    password = os.getenv("DB_PASSWORD", "123456")
+    password = os.getenv("DB_PASSWORD", "")
     database = os.getenv("DB_NAME", "eat")
 
     print(f"Connecting to {host}:{port} ({database})...")

@@ -6,7 +6,7 @@ import os
 from collections.abc import AsyncIterator
 from datetime import datetime
 from queue import Queue, Empty
-from threading import Thread, Event
+from threading import Thread, Event, Lock
 
 from fastapi import Request
 from langchain.chat_models import init_chat_model
@@ -116,6 +116,10 @@ def search_resume(category: str, query: str = None) -> str:
     """
     logger.info(f"查询简历: category={category}, query={query}")
 
+    # 防止路径遍历攻击
+    if query and (".." in query or "/" in query or "\\" in query):
+        return "[查询被拒绝：仅允许关键词搜索，禁止路径遍历]"
+
     files = _find_files(category, query)
     if not files:
         available = "、".join(_CATEGORIES.keys())
@@ -140,6 +144,7 @@ def _sse(data: dict) -> str:
 # ── Agent 单例 ──
 
 _agent_service = None
+_agent_lock = Lock()
 
 
 class AgentService:
@@ -148,38 +153,44 @@ class AgentService:
 
     def get_agent(self):
         if self._agent is None:
-            settings = get_settings()
-            model = init_chat_model(
-                settings.model.model_name,
-                temperature=settings.model.temperature,
-                timeout=settings.model.timeout,
-                max_tokens=settings.model.max_tokens,
-            )
-            conn = settings.db.get_connection()
-            self._checkpointer = PyMySQLSaver(conn)
-            self._checkpointer.setup()
-            self._agent = create_agent(
-                model=model,
-                tools=[search_resume, getNowDateTime],
-                prompt=SYSTEM_PROMPT,
-                checkpointer=self._checkpointer,
-                pre_model_hook=filter_messages,
-            )
+            with _agent_lock:
+                if self._agent is None:
+                    settings = get_settings()
+                    model = init_chat_model(
+                        settings.model.model_name,
+                        temperature=settings.model.temperature,
+                        timeout=settings.model.timeout,
+                        max_tokens=settings.model.max_tokens,
+                    )
+                    conn = settings.db.get_connection()
+                    self._checkpointer = PyMySQLSaver(conn)
+                    self._checkpointer.setup()
+                    self._agent = create_agent(
+                        model=model,
+                        tools=[search_resume, getNowDateTime],
+                        prompt=SYSTEM_PROMPT,
+                        checkpointer=self._checkpointer,
+                        pre_model_hook=filter_messages,
+                    )
         return self._agent
 
     def get_checkpointer(self) -> PyMySQLSaver:
         if self._checkpointer is None:
-            settings = get_settings()
-            conn = settings.db.get_connection()
-            self._checkpointer = PyMySQLSaver(conn)
-            self._checkpointer.setup()
+            with _agent_lock:
+                if self._checkpointer is None:
+                    settings = get_settings()
+                    conn = settings.db.get_connection()
+                    self._checkpointer = PyMySQLSaver(conn)
+                    self._checkpointer.setup()
         return self._checkpointer
 
 
 def get_agent_service() -> AgentService:
     global _agent_service
     if _agent_service is None:
-        _agent_service = AgentService()
+        with _agent_lock:
+            if _agent_service is None:
+                _agent_service = AgentService()
     return _agent_service
 
 
