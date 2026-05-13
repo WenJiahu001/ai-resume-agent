@@ -1,7 +1,6 @@
 @import "tailwindcss";
-@plugin "@tailwindcss/typography";
-
 @import "highlight.js/styles/github-dark.css";
+@plugin "@tailwindcss/typography";
 
 body {
   margin: 0;
